@@ -1,0 +1,175 @@
+# Terraform Apply Workflow
+#
+# Triggered on push to non-main branches in app-infrastructure repo.
+# Branch format: {app}/{env} (e.g., myapp/dev, myapp/prod)
+#
+# For each changed tfvars file:
+# 1. Checks out infrastructure-automation for pattern terraform
+# 2. terraform init with backend config
+# 3. terraform plan -var-file=terraform.tfvars.json
+# 4. terraform apply (auto-approve for dev, require approval for prod)
+
+name: Terraform Apply
+
+run-name: "apply: ${{ github.ref_name }}"
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - '*/terraform.tfvars.json'
+      - '*/backend.hcl'
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  TF_IN_AUTOMATION: 'true'
+  INFRA_REPO: 'infrastructure-automation'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  parse-branch:
+    name: Parse Branch
+    runs-on: ubuntu-latest
+    outputs:
+      app_id: ${{ steps.parse.outputs.app_id }}
+      environment: ${{ steps.parse.outputs.environment }}
+      changed_patterns: ${{ steps.detect.outputs.changed_patterns }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Parse branch name
+        id: parse
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          # Extract app_id and environment from branch name
+          APP_ID=$(echo "$BRANCH" | cut -d'/' -f1)
+          ENV=$(echo "$BRANCH" | cut -d'/' -f2)
+
+          if [ -z "$APP_ID" ] || [ -z "$ENV" ]; then
+            echo "::error::Invalid branch format. Expected: {app}/{env}"
+            exit 1
+          fi
+
+          VALID_ENVS="dev staging prod"
+          if [[ ! " $VALID_ENVS " =~ " $ENV " ]]; then
+            echo "::error::Invalid environment: $ENV"
+            exit 1
+          fi
+
+          echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+
+      - name: Detect changed patterns
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep 'terraform.tfvars.json' | sed 's|/terraform.tfvars.json||' | sort -u)
+          if [ -z "$CHANGED" ]; then
+            echo "changed_patterns=[]" >> $GITHUB_OUTPUT
+          else
+            JSON=$(echo "$CHANGED" | jq -R . | jq -sc .)
+            echo "changed_patterns=$JSON" >> $GITHUB_OUTPUT
+          fi
+
+  apply:
+    name: "apply: ${{ matrix.pattern }}"
+    runs-on: ubuntu-latest
+    needs: parse-branch
+    if: needs.parse-branch.outputs.changed_patterns != '[]'
+    environment: ${{ needs.parse-branch.outputs.environment }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        pattern: ${{ fromJSON(needs.parse-branch.outputs.changed_patterns) }}
+
+    steps:
+      - name: Checkout app-infrastructure
+        uses: actions/checkout@v4
+
+      - name: Checkout infrastructure-automation
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
+          path: infra
+          ref: main
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Select Azure credentials
+        id: creds
+        run: |
+          case "${{ needs.parse-branch.outputs.environment }}" in
+            dev)     echo "client_id=AZURE_CLIENT_ID_dev" >> $GITHUB_OUTPUT ;;
+            staging) echo "client_id=AZURE_CLIENT_ID_staging" >> $GITHUB_OUTPUT ;;
+            prod)    echo "client_id=AZURE_CLIENT_ID_prod" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets[steps.creds.outputs.client_id] }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Copy tfvars to pattern directory
+        run: |
+          cp "${{ matrix.pattern }}/terraform.tfvars.json" \
+             "infra/terraform/patterns/${{ matrix.pattern }}/terraform.tfvars.json"
+
+      - name: Terraform Init
+        working-directory: infra/terraform/patterns/${{ matrix.pattern }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets[steps.creds.outputs.client_id] }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+        run: |
+          # Use backend.hcl from the app-infrastructure repo
+          terraform init \
+            -backend-config="${{ github.workspace }}/${{ matrix.pattern }}/backend.hcl"
+
+      - name: Terraform Plan
+        working-directory: infra/terraform/patterns/${{ matrix.pattern }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets[steps.creds.outputs.client_id] }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+        run: |
+          terraform plan \
+            -var-file=terraform.tfvars.json \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: infra/terraform/patterns/${{ matrix.pattern }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets[steps.creds.outputs.client_id] }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+        run: terraform apply -auto-approve tfplan
+        timeout-minutes: 45
+
+      - name: Capture outputs
+        if: always()
+        working-directory: infra/terraform/patterns/${{ matrix.pattern }}
+        env:
+          ARM_CLIENT_ID: ${{ secrets[steps.creds.outputs.client_id] }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+        run: |
+          echo "## ${{ matrix.pattern }} Outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          terraform output -json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo '{}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

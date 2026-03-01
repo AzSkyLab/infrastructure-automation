@@ -1,25 +1,69 @@
-variable "name" {
-    type        = string
-    description = "Name of the PostgreSQL server"
-}
+# terraform/modules/postgresql/variables.tf
 
-variable "resource_group_name" {
-    type        = string
-    description = "Resource group name"
+variable "name" {
+  description = "PostgreSQL server name"
+  type        = string
 }
 
 variable "location" {
-    type        = string
-    description = "Azure location"
+  description = "Azure region"
+  type        = string
 }
 
-variable "config" {
-    type        = any
-    description = "PostgreSQL configuration"
+variable "resource_group_name" {
+  description = "Resource group name"
+  type        = string
+}
+
+variable "postgresql_version" {
+  description = "PostgreSQL version"
+  type        = string
+  default     = "16"
+}
+
+variable "admin_username" {
+  description = "Administrator username"
+  type        = string
+  default     = "psqladmin"
+}
+
+variable "sku_name" {
+  description = "PostgreSQL SKU name (e.g., B_Standard_B1ms, GP_Standard_D2s_v3)"
+  type        = string
+  default     = "B_Standard_B1ms"
+}
+
+variable "storage_mb" {
+  description = "Storage size in MB"
+  type        = number
+  default     = 32768
+}
+
+variable "backup_retention_days" {
+  description = "Backup retention in days"
+  type        = number
+  default     = 7
+}
+
+variable "geo_redundant_backup" {
+  description = "Enable geo-redundant backups"
+  type        = bool
+  default     = false
+}
+
+variable "availability_zone" {
+  description = "Availability zone"
+  type        = string
+  default     = null
+}
+
+variable "database_name" {
+  description = "Database name to create"
+  type        = string
 }
 
 variable "tags" {
-    type        = map(string)
-    default     = {}
-    description = "Resource tags"
+  description = "Resource tags"
+  type        = map(string)
+  default     = {}
 }

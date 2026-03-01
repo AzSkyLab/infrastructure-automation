@@ -1,0 +1,81 @@
+# terraform/patterns/storage_account/variables.tf
+
+variable "project" {
+  description = "Project name"
+  type        = string
+}
+
+variable "environment" {
+  description = "Environment (dev, staging, prod)"
+  type        = string
+}
+
+variable "name" {
+  description = "Resource name suffix"
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region"
+  type        = string
+  default     = "eastus"
+}
+
+variable "business_unit" {
+  description = "Business unit for tagging"
+  type        = string
+  default     = ""
+}
+
+variable "owners" {
+  description = "List of owner email addresses"
+  type        = list(string)
+}
+
+variable "account_tier" {
+  description = "Storage account tier (Standard or Premium)"
+  type        = string
+  default     = "Standard"
+}
+
+variable "replication_type" {
+  description = "Replication type (LRS, GRS, ZRS, RAGRS)"
+  type        = string
+  default     = "LRS"
+}
+
+variable "access_tier" {
+  description = "Access tier (Hot, Cool)"
+  type        = string
+  default     = "Hot"
+}
+
+variable "enable_versioning" {
+  description = "Enable blob versioning"
+  type        = bool
+  default     = false
+}
+
+variable "soft_delete_days" {
+  description = "Soft delete retention days (0 to disable)"
+  type        = number
+  default     = 0
+}
+
+variable "containers" {
+  description = "List of blob container names to create"
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_diagnostics" {
+  description = "Enable diagnostic settings"
+  type        = bool
+  default     = false
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics"
+  type        = string
+  default     = ""
+}
