@@ -204,7 +204,7 @@ class PatternResolver:
     ) -> str:
         """Compute the Terraform state key for a deployment."""
         business_unit = _sanitize_path_component(
-            metadata.get("business_unit", "default"), "business_unit"
+            metadata.get("business_unit") or "default", "business_unit"
         )
         project = _sanitize_path_component(
             metadata.get("project", "unknown"), "project"
