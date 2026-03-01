@@ -1,9 +1,9 @@
 """Entra ID OAuth provider for MCP server authentication.
 
 Implements OAuthAuthorizationServerProvider to proxy authentication
-to Entra ID using PKCE (no client secrets). The MCP server acts as
-an OAuth Authorization Server that delegates identity verification
-to Entra ID, then issues its own JWT access tokens.
+to Entra ID. The MCP server acts as an OAuth Authorization Server
+that delegates identity verification to Entra ID (confidential client
+with PKCE), then issues its own JWT access tokens.
 
 Flow:
     Claude Code -> MCP /authorize -> Entra ID login -> /auth/callback -> Claude Code
@@ -35,20 +35,27 @@ logger = logging.getLogger(__name__)
 
 
 class EntraOAuthProvider:
-    """OAuth provider that delegates authentication to Entra ID with PKCE.
+    """OAuth provider that delegates authentication to Entra ID.
 
     Implements the OAuthAuthorizationServerProvider protocol so FastMCP
-    handles /authorize, /token, /register endpoints automatically. This
-    provider generates its own PKCE pair for the Entra ID exchange and
-    stores a separate PKCE challenge from Claude Code for the MCP token
-    exchange.
+    handles /authorize, /token, /register endpoints automatically. The
+    MCP server acts as a confidential client with Entra ID (client secret
+    + PKCE) and stores a separate PKCE challenge from Claude Code for the
+    MCP token exchange.
 
     All state is in-memory (acceptable for single-instance dev tool).
     """
 
-    def __init__(self, tenant_id: str, entra_client_id: str, server_url: str):
+    def __init__(
+        self,
+        tenant_id: str,
+        entra_client_id: str,
+        server_url: str,
+        entra_client_secret: str | None = None,
+    ):
         self.tenant_id = tenant_id
         self.entra_client_id = entra_client_id
+        self.entra_client_secret = entra_client_secret
         self.server_url = server_url.rstrip("/")
         self.callback_url = f"{self.server_url}/auth/callback"
 
@@ -155,17 +162,21 @@ class EntraOAuthProvider:
             logger.error("Auth state expired")
             return RedirectResponse(status_code=302, url="/")
 
-        # Exchange Entra code for tokens (PKCE, no client secret)
+        # Exchange Entra code for tokens (confidential client + PKCE)
+        token_data = {
+            "grant_type": "authorization_code",
+            "client_id": self.entra_client_id,
+            "code": code,
+            "redirect_uri": self.callback_url,
+            "code_verifier": pending["code_verifier"],
+        }
+        if self.entra_client_secret:
+            token_data["client_secret"] = self.entra_client_secret
+
         async with httpx.AsyncClient() as http_client:
             resp = await http_client.post(
                 self.entra_token_url,
-                data={
-                    "grant_type": "authorization_code",
-                    "client_id": self.entra_client_id,
-                    "code": code,
-                    "redirect_uri": self.callback_url,
-                    "code_verifier": pending["code_verifier"],
-                },
+                data=token_data,
             )
 
         if resp.status_code != 200:

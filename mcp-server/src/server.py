@@ -33,6 +33,7 @@ port = int(os.environ.get("MCP_PORT", "8000"))
 
 _tenant_id = os.environ.get("AZURE_TENANT_ID")
 _entra_client_id = os.environ.get("MCP_ENTRA_CLIENT_ID")
+_entra_client_secret = os.environ.get("MCP_ENTRA_CLIENT_SECRET")
 _server_url = os.environ.get("MCP_SERVER_URL")
 
 if all([_tenant_id, _entra_client_id, _server_url]):
@@ -41,7 +42,9 @@ if all([_tenant_id, _entra_client_id, _server_url]):
 
     from .auth.provider import EntraOAuthProvider
 
-    _auth_provider = EntraOAuthProvider(_tenant_id, _entra_client_id, _server_url)
+    _auth_provider = EntraOAuthProvider(
+        _tenant_id, _entra_client_id, _server_url, _entra_client_secret
+    )
     _auth_settings = AuthSettings(
         issuer_url=AnyHttpUrl(_server_url),
         resource_server_url=AnyHttpUrl(f"{_server_url.rstrip('/')}/mcp"),

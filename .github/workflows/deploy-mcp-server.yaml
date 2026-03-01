@@ -98,11 +98,12 @@ jobs:
           DEPLOY_ENV: ${{ inputs.environment || 'prod' }}
           APP_ID_VALUE: ${{ secrets.INFRA_APP_ID }}
           APP_KEY_VALUE: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          ENTRA_SECRET_VALUE: ${{ secrets.MCP_ENTRA_CLIENT_SECRET }}
         run: |
           az containerapp secret set \
             --name "ca-mcp-${DEPLOY_ENV}" \
             --resource-group "rg-mcp-${DEPLOY_ENV}" \
-            --secrets "infra-app-id=${APP_ID_VALUE}" "infra-app-private-key=${APP_KEY_VALUE}"
+            --secrets "infra-app-id=${APP_ID_VALUE}" "infra-app-private-key=${APP_KEY_VALUE}" "entra-client-secret=${ENTRA_SECRET_VALUE}"
 
       - name: Deploy Container App
         env:
@@ -123,6 +124,7 @@ jobs:
               "INFRA_APP_PRIVATE_KEY=secretref:infra-app-private-key" \
               "AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" \
               "MCP_ENTRA_CLIENT_ID=${{ vars.MCP_ENTRA_CLIENT_ID }}" \
+              "MCP_ENTRA_CLIENT_SECRET=secretref:entra-client-secret" \
               "MCP_SERVER_URL=https://ca-mcp-${DEPLOY_ENV}.mangoflower-3bcf53fc.centralus.azurecontainerapps.io" \
             --remove-env-vars PORT NODE_ENV
 
