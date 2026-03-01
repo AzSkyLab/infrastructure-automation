@@ -68,12 +68,10 @@ async def push_tfvars(
 
     tfvars_json = json.dumps(tfvars, indent=2)
 
-    # Generate backend.hcl
+    # Generate backend.hcl (only the state key; storage account details
+    # are provided by the CI workflow via -backend-config CLI flags)
     backend_hcl = f"""# Auto-generated backend configuration
-resource_group_name  = "${{TF_STATE_RESOURCE_GROUP}}"
-storage_account_name = "${{TF_STATE_STORAGE_ACCOUNT}}"
-container_name       = "${{TF_STATE_CONTAINER}}"
-key                  = "{state_key}"
+key = "{state_key}"
 """
 
     branch = f"{project}/{environment}"

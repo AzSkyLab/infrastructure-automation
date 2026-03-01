@@ -165,10 +165,16 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
           PATTERN: ${{ matrix.pattern }}
+          TF_STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          TF_STATE_SA: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
         run: |
-          # Use backend.hcl from the app-infrastructure repo
+          # backend.hcl provides the state key; storage details from CI secrets
           terraform init \
-            -backend-config="${GITHUB_WORKSPACE}/${PATTERN}/backend.hcl"
+            -backend-config="${GITHUB_WORKSPACE}/${PATTERN}/backend.hcl" \
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_SA}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER:-tfstate}"
 
       - name: Terraform Plan
         working-directory: infra/terraform/patterns/${{ matrix.pattern }}
