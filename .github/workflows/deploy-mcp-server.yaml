@@ -94,27 +94,36 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy Container App
+        env:
+          DEPLOY_ENV: ${{ inputs.environment || 'prod' }}
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           IMAGE="${{ env.REGISTRY }}/${REPO_LOWER}/infrastructure-mcp-server:${{ needs.build.outputs.image_tag }}"
 
           az containerapp update \
-            --name ca-mcp-${{ inputs.environment || 'prod' }} \
-            --resource-group rg-mcp-${{ inputs.environment || 'prod' }} \
-            --image "$IMAGE"
+            --name "ca-mcp-${DEPLOY_ENV}" \
+            --resource-group "rg-mcp-${DEPLOY_ENV}" \
+            --image "$IMAGE" \
+            --set-env-vars \
+              "INFRA_REPO=${{ github.repository }}" \
+              "APP_INFRA_REPO=${{ github.repository_owner }}/app-infrastructure" \
+              "INFRA_APP_ID=secretref:infra-app-id" \
+              "INFRA_APP_PRIVATE_KEY=secretref:infra-app-private-key"
 
       - name: Health Check
+        env:
+          DEPLOY_ENV: ${{ inputs.environment || 'prod' }}
         run: |
           MCP_URL=$(az containerapp show \
-            --name ca-mcp-${{ inputs.environment || 'prod' }} \
-            --resource-group rg-mcp-${{ inputs.environment || 'prod' }} \
+            --name "ca-mcp-${DEPLOY_ENV}" \
+            --resource-group "rg-mcp-${DEPLOY_ENV}" \
             --query "properties.configuration.ingress.fqdn" -o tsv)
 
           echo "Waiting for deployment..."
           sleep 15
 
           for i in {1..10}; do
-            if curl -sf "https://$MCP_URL/health" > /dev/null 2>&1; then
+            if curl -sf "https://$MCP_URL/mcp" -o /dev/null 2>&1; then
               echo "Health check passed"
               exit 0
             fi

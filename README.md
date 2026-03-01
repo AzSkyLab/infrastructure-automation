@@ -72,11 +72,25 @@ app-infrastructure/         # GitOps repo reference
 | `INFRA_APP_ID` | GitHub App for cross-repo operations |
 | `INFRA_APP_PRIVATE_KEY` | GitHub App private key |
 
+### MCP Server Environment Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `INFRA_REPO` | Infrastructure-automation repo (owner/repo) | `csGIT34/infrastructure-automation` |
+| `APP_INFRA_REPO` | App-infrastructure GitOps repo (owner/repo) | `csGIT34/app-infrastructure` |
+| `INFRA_APP_ID` | GitHub App ID for API auth | |
+| `INFRA_APP_PRIVATE_KEY` | GitHub App private key (PEM) | |
+| `MCP_TRANSPORT` | Transport mode (`streamable-http` or `stdio`) | `streamable-http` |
+| `MCP_HOST` | Bind address (default: `127.0.0.1`) | `0.0.0.0` |
+| `MCP_PORT` | Listen port (default: `8000`) | `8000` |
+
 ### Running the MCP Server Locally
 
 ```bash
 cd mcp-server
 pip install -e .
+export INFRA_REPO=csGIT34/infrastructure-automation
+export APP_INFRA_REPO=csGIT34/app-infrastructure
 MCP_TRANSPORT=stdio python -m src.server
 ```
 
