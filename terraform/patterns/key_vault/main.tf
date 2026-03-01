@@ -6,7 +6,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0"
+      version = "~> 4.0"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -44,12 +44,14 @@ module "resource_group" {
 
 # 3. Key Vault
 module "key_vault" {
-  source              = "../../modules/key_vault"
-  name                = module.naming.name
-  location            = var.location
-  resource_group_name = module.resource_group.name
-  sku_name            = var.sku_name
-  tags                = module.naming.tags
+  source                     = "../../modules/key_vault"
+  name                       = module.naming.name
+  location                   = var.location
+  resource_group_name        = module.resource_group.name
+  sku_name                   = var.sku_name
+  purge_protection_enabled   = var.purge_protection_enabled
+  soft_delete_retention_days = var.soft_delete_retention_days
+  tags                       = module.naming.tags
 }
 
 # 4. Security Groups

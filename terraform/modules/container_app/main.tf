@@ -6,7 +6,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0"
+      version = "~> 4.0"
     }
   }
 }
@@ -31,6 +31,13 @@ resource "azurerm_container_app" "main" {
   resource_group_name          = var.resource_group_name
   revision_mode                = var.revision_mode
   tags                         = var.tags
+
+  dynamic "identity" {
+    for_each = var.enable_managed_identity ? [1] : []
+    content {
+      type = "SystemAssigned"
+    }
+  }
 
   template {
     min_replicas = var.min_replicas

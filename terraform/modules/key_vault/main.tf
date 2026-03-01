@@ -6,7 +6,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0"
+      version = "~> 4.0"
     }
   }
 }
@@ -19,10 +19,14 @@ resource "azurerm_key_vault" "main" {
   resource_group_name        = var.resource_group_name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = var.sku_name
-  soft_delete_retention_days = 7
+  soft_delete_retention_days = var.soft_delete_retention_days
   purge_protection_enabled   = var.purge_protection_enabled
   rbac_authorization_enabled = true
   tags                       = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Grant Terraform service principal Secrets Officer access

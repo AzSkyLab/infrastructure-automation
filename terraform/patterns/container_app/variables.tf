@@ -8,6 +8,11 @@ variable "project" {
 variable "environment" {
   description = "Environment (dev, staging, prod)"
   type        = string
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be 'dev', 'staging', or 'prod'."
+  }
 }
 
 variable "name" {
@@ -30,6 +35,11 @@ variable "business_unit" {
 variable "owners" {
   description = "List of owner email addresses"
   type        = list(string)
+
+  validation {
+    condition     = length(var.owners) > 0
+    error_message = "At least one owner email is required."
+  }
 }
 
 variable "container_app_environment_id" {
@@ -77,7 +87,7 @@ variable "enable_ingress" {
 variable "external_ingress" {
   description = "Allow external ingress"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "target_port" {
@@ -101,5 +111,5 @@ variable "enable_diagnostics" {
 variable "log_analytics_workspace_id" {
   description = "Log Analytics workspace ID for diagnostics"
   type        = string
-  default     = ""
+  default     = null
 }

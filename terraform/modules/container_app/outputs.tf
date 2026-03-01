@@ -29,3 +29,8 @@ output "latest_revision_name" {
   description = "Latest revision name"
   value       = azurerm_container_app.main.latest_revision_name
 }
+
+output "principal_id" {
+  description = "System-assigned managed identity principal ID (null if not enabled)"
+  value       = try(azurerm_container_app.main.identity[0].principal_id, null)
+}

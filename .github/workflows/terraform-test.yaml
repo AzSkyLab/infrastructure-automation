@@ -38,6 +38,9 @@ on:
         description: 'Whether tests passed'
         value: ${{ jobs.summary.outputs.test_passed }}
 
+permissions:
+  contents: read
+
 env:
   TERRAFORM_VERSION: '1.6.0'
   TF_IN_AUTOMATION: 'true'
@@ -59,6 +62,11 @@ jobs:
 
       - name: Detect changed files and determine tests
         id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TEST_TYPE: ${{ inputs.test_type }}
+          INPUT_PATTERN_NAME: ${{ inputs.pattern_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Pattern -> Module dependencies
           declare -A PATTERN_MODULES=(
@@ -71,24 +79,29 @@ jobs:
 
           SHARED_MODULES="naming security_groups rbac_assignments"
 
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            if [ "${{ inputs.test_type }}" == "all" ]; then
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            if [ "$INPUT_TEST_TYPE" == "all" ]; then
               echo "run_all=true" >> $GITHUB_OUTPUT
               echo "has_changes=true" >> $GITHUB_OUTPUT
               exit 0
             fi
           fi
 
-          if [ -n "${{ inputs.pattern_name }}" ]; then
-            echo "patterns_to_test=[\"${{ inputs.pattern_name }}\"]" >> $GITHUB_OUTPUT
+          if [ -n "$INPUT_PATTERN_NAME" ]; then
+            # Validate pattern name format
+            if [[ ! "$INPUT_PATTERN_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "::error::Invalid pattern name format"
+              exit 1
+            fi
+            echo "patterns_to_test=[\"${INPUT_PATTERN_NAME}\"]" >> $GITHUB_OUTPUT
             echo "modules_to_test=[]" >> $GITHUB_OUTPUT
             echo "run_all=false" >> $GITHUB_OUTPUT
             echo "has_changes=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ "$EVENT_NAME" == "pull_request" ]; then
+            BASE_SHA="$PR_BASE_SHA"
           else
             BASE_SHA="HEAD~1"
           fi
@@ -211,21 +224,22 @@ jobs:
     steps:
       - name: Determine result
         id: result
+        env:
+          HAS_CHANGES: ${{ needs.detect-changes.outputs.has_changes }}
+          MODULES_RESULT: ${{ needs.validate-modules.result }}
+          PATTERNS_RESULT: ${{ needs.validate-patterns.result }}
         run: |
-          if [ "${{ needs.detect-changes.outputs.has_changes }}" != "true" ]; then
+          if [ "$HAS_CHANGES" != "true" ]; then
             echo "passed=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          MODULES="${{ needs.validate-modules.result }}"
-          PATTERNS="${{ needs.validate-patterns.result }}"
-
-          if [ "$MODULES" != "success" ] && [ "$MODULES" != "skipped" ]; then
+          if [ "$MODULES_RESULT" != "success" ] && [ "$MODULES_RESULT" != "skipped" ]; then
             echo "passed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          if [ "$PATTERNS" != "success" ] && [ "$PATTERNS" != "skipped" ]; then
+          if [ "$PATTERNS_RESULT" != "success" ] && [ "$PATTERNS_RESULT" != "skipped" ]; then
             echo "passed=false" >> $GITHUB_OUTPUT
             exit 0
           fi

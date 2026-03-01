@@ -122,4 +122,5 @@ jobs:
             sleep 10
           done
 
-          echo "::warning::Health check did not pass within timeout"
+          echo "::error::Health check did not pass within timeout"
+          exit 1

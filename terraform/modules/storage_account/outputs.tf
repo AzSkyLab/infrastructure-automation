@@ -15,12 +15,6 @@ output "primary_blob_endpoint" {
   value       = azurerm_storage_account.main.primary_blob_endpoint
 }
 
-output "primary_access_key" {
-  description = "Primary access key"
-  value       = azurerm_storage_account.main.primary_access_key
-  sensitive   = true
-}
-
 output "containers" {
   description = "List of created container names"
   value       = [for c in azurerm_storage_container.containers : c.name]

@@ -11,13 +11,23 @@ on:
   workflow_dispatch:
     inputs:
       pattern:
-        description: 'Pattern name (key_vault, storage_account, postgresql, container_app, web_backend)'
+        description: 'Pattern name'
         required: true
-        type: string
+        type: choice
+        options:
+          - key_vault
+          - storage_account
+          - postgresql
+          - container_app
+          - web_backend
       environment:
         description: 'Target environment (dev, staging, prod)'
         required: true
-        type: string
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
       tfvars_json:
         description: 'Base64-encoded terraform.tfvars.json content'
         required: true
@@ -43,24 +53,29 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: provision-${{ inputs.pattern }}-${{ inputs.environment }}-${{ inputs.state_key }}
+  cancel-in-progress: false
+
 jobs:
   provision:
     name: "${{ inputs.action }}: ${{ inputs.pattern }} (${{ inputs.environment }})"
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
 
+    env:
+      INPUT_PATTERN: ${{ inputs.pattern }}
+      INPUT_ENVIRONMENT: ${{ inputs.environment }}
+      INPUT_ACTION: ${{ inputs.action }}
+      INPUT_TFVARS_JSON: ${{ inputs.tfvars_json }}
+      INPUT_STATE_KEY: ${{ inputs.state_key }}
+
     steps:
       - name: Validate inputs
         run: |
-          VALID_PATTERNS="key_vault storage_account postgresql container_app web_backend"
-          if [[ ! " $VALID_PATTERNS " =~ " ${{ inputs.pattern }} " ]]; then
-            echo "::error::Invalid pattern: ${{ inputs.pattern }}"
-            exit 1
-          fi
-
-          VALID_ENVS="dev staging prod"
-          if [[ ! " $VALID_ENVS " =~ " ${{ inputs.environment }} " ]]; then
-            echo "::error::Invalid environment: ${{ inputs.environment }}"
+          # Validate state_key format (alphanumeric, hyphens, underscores, slashes, dots)
+          if [[ ! "$INPUT_STATE_KEY" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+            echo "::error::Invalid state_key format"
             exit 1
           fi
 
@@ -75,7 +90,7 @@ jobs:
       - name: Select Azure credentials
         id: creds
         run: |
-          case "${{ inputs.environment }}" in
+          case "$INPUT_ENVIRONMENT" in
             dev)     echo "client_id=AZURE_CLIENT_ID_dev" >> $GITHUB_OUTPUT ;;
             staging) echo "client_id=AZURE_CLIENT_ID_staging" >> $GITHUB_OUTPUT ;;
             prod)    echo "client_id=AZURE_CLIENT_ID_prod" >> $GITHUB_OUTPUT ;;
@@ -91,9 +106,9 @@ jobs:
       - name: Decode tfvars
         working-directory: terraform/patterns/${{ inputs.pattern }}
         run: |
-          echo "${{ inputs.tfvars_json }}" | base64 -d > terraform.tfvars.json
-          echo "Decoded tfvars:"
-          cat terraform.tfvars.json | jq '.' 2>/dev/null || cat terraform.tfvars.json
+          echo "$INPUT_TFVARS_JSON" | base64 -d > terraform.tfvars.json
+          echo "Decoded tfvars (keys only):"
+          cat terraform.tfvars.json | jq 'keys' 2>/dev/null || echo "(not valid JSON)"
 
       - name: Terraform Init
         working-directory: terraform/patterns/${{ inputs.pattern }}
@@ -102,12 +117,15 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
+          TF_STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          TF_STATE_SA: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER || 'tfstate' }}" \
-            -backend-config="key=${{ inputs.state_key }}"
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_SA}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER:-tfstate}" \
+            -backend-config="key=${INPUT_STATE_KEY}"
 
       - name: Terraform Plan
         working-directory: terraform/patterns/${{ inputs.pattern }}
@@ -118,7 +136,7 @@ jobs:
           ARM_USE_OIDC: true
         run: |
           DESTROY_FLAG=""
-          if [ "${{ inputs.action }}" == "destroy" ]; then
+          if [ "$INPUT_ACTION" == "destroy" ]; then
             DESTROY_FLAG="-destroy"
           fi
 
@@ -158,7 +176,7 @@ jobs:
           echo "## Provisioning Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Pattern | \`${{ inputs.pattern }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | \`${{ inputs.action }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| State Key | \`${{ inputs.state_key }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Pattern | \`$INPUT_PATTERN\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`$INPUT_ENVIRONMENT\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | \`$INPUT_ACTION\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| State Key | \`$INPUT_STATE_KEY\` |" >> $GITHUB_STEP_SUMMARY

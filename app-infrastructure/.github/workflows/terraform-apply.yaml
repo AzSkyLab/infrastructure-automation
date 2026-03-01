@@ -7,7 +7,7 @@
 # 1. Checks out infrastructure-automation for pattern terraform
 # 2. terraform init with backend config
 # 3. terraform plan -var-file=terraform.tfvars.json
-# 4. terraform apply (auto-approve for dev, require approval for prod)
+# 4. terraform apply (auto-approve for dev/staging, manual approval for prod)
 
 name: Terraform Apply
 
@@ -30,6 +30,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: apply-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   parse-branch:
     name: Parse Branch
@@ -46,14 +50,21 @@ jobs:
 
       - name: Parse branch name
         id: parse
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          BRANCH="${{ github.ref_name }}"
           # Extract app_id and environment from branch name
-          APP_ID=$(echo "$BRANCH" | cut -d'/' -f1)
-          ENV=$(echo "$BRANCH" | cut -d'/' -f2)
+          APP_ID=$(echo "$BRANCH_NAME" | cut -d'/' -f1)
+          ENV=$(echo "$BRANCH_NAME" | cut -d'/' -f2)
 
           if [ -z "$APP_ID" ] || [ -z "$ENV" ]; then
             echo "::error::Invalid branch format. Expected: {app}/{env}"
+            exit 1
+          fi
+
+          # Validate app_id format
+          if [[ ! "$APP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::Invalid app_id format: $APP_ID"
             exit 1
           fi
 
@@ -68,12 +79,26 @@ jobs:
 
       - name: Detect changed patterns
         id: detect
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep 'terraform.tfvars.json' | sed 's|/terraform.tfvars.json||' | sort -u)
-          if [ -z "$CHANGED" ]; then
+          CHANGED=$(git diff --name-only "${BEFORE_SHA:-HEAD~1}" HEAD 2>/dev/null | grep 'terraform.tfvars.json' | sed 's|/terraform.tfvars.json||' | sort -u)
+
+          # Validate pattern names
+          VALID_CHANGED=""
+          for pattern in $CHANGED; do
+            if [[ "$pattern" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              VALID_CHANGED="$VALID_CHANGED $pattern"
+            else
+              echo "::warning::Skipping invalid pattern name: $pattern"
+            fi
+          done
+          VALID_CHANGED=$(echo "$VALID_CHANGED" | xargs)
+
+          if [ -z "$VALID_CHANGED" ]; then
             echo "changed_patterns=[]" >> $GITHUB_OUTPUT
           else
-            JSON=$(echo "$CHANGED" | jq -R . | jq -sc .)
+            JSON=$(echo "$VALID_CHANGED" | tr ' ' '\n' | jq -R . | jq -sc .)
             echo "changed_patterns=$JSON" >> $GITHUB_OUTPUT
           fi
 
@@ -89,6 +114,9 @@ jobs:
       matrix:
         pattern: ${{ fromJSON(needs.parse-branch.outputs.changed_patterns) }}
 
+    env:
+      DEPLOY_ENV: ${{ needs.parse-branch.outputs.environment }}
+
     steps:
       - name: Checkout app-infrastructure
         uses: actions/checkout@v4
@@ -99,6 +127,7 @@ jobs:
           repository: ${{ github.repository_owner }}/${{ env.INFRA_REPO }}
           path: infra
           ref: main
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -108,7 +137,7 @@ jobs:
       - name: Select Azure credentials
         id: creds
         run: |
-          case "${{ needs.parse-branch.outputs.environment }}" in
+          case "$DEPLOY_ENV" in
             dev)     echo "client_id=AZURE_CLIENT_ID_dev" >> $GITHUB_OUTPUT ;;
             staging) echo "client_id=AZURE_CLIENT_ID_staging" >> $GITHUB_OUTPUT ;;
             prod)    echo "client_id=AZURE_CLIENT_ID_prod" >> $GITHUB_OUTPUT ;;
@@ -122,9 +151,11 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Copy tfvars to pattern directory
+        env:
+          PATTERN: ${{ matrix.pattern }}
         run: |
-          cp "${{ matrix.pattern }}/terraform.tfvars.json" \
-             "infra/terraform/patterns/${{ matrix.pattern }}/terraform.tfvars.json"
+          cp "${PATTERN}/terraform.tfvars.json" \
+             "infra/terraform/patterns/${PATTERN}/terraform.tfvars.json"
 
       - name: Terraform Init
         working-directory: infra/terraform/patterns/${{ matrix.pattern }}
@@ -133,10 +164,11 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
+          PATTERN: ${{ matrix.pattern }}
         run: |
           # Use backend.hcl from the app-infrastructure repo
           terraform init \
-            -backend-config="${{ github.workspace }}/${{ matrix.pattern }}/backend.hcl"
+            -backend-config="${GITHUB_WORKSPACE}/${PATTERN}/backend.hcl"
 
       - name: Terraform Plan
         working-directory: infra/terraform/patterns/${{ matrix.pattern }}
@@ -161,15 +193,16 @@ jobs:
         timeout-minutes: 45
 
       - name: Capture outputs
-        if: always()
+        if: success()
         working-directory: infra/terraform/patterns/${{ matrix.pattern }}
         env:
           ARM_CLIENT_ID: ${{ secrets[steps.creds.outputs.client_id] }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
+          PATTERN: ${{ matrix.pattern }}
         run: |
-          echo "## ${{ matrix.pattern }} Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "## ${PATTERN} Outputs" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
           terraform output -json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo '{}' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

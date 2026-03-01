@@ -5,6 +5,7 @@ infrastructure patterns via Claude Code.
 """
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -16,6 +17,13 @@ from .tools import patterns as pattern_tools
 from .tools import provision as provision_tools
 from .tools import status as status_tools
 from .tools import tfvars as tfvars_tools
+
+# Configure logging
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
     "Infrastructure Self-Service",
@@ -250,7 +258,7 @@ async def list_deployments(
 
     Args:
         status: Filter by status (queued, in_progress, completed)
-        limit: Max results (default 10)
+        limit: Max results (default 10, max 100)
     """
     results = await status_tools.list_deployments(status=status, limit=limit)
     return json.dumps(results, indent=2)
@@ -261,6 +269,10 @@ def main():
     transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8000"))
+
+    # Eagerly load patterns at startup
+    patterns = load_patterns()
+    logger.info("Server starting with %d patterns loaded", len(patterns))
 
     if transport == "stdio":
         mcp.run(transport="stdio")

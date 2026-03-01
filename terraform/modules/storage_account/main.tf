@@ -6,20 +6,23 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0"
+      version = "~> 4.0"
     }
   }
 }
 
 resource "azurerm_storage_account" "main" {
-  name                     = var.name
-  resource_group_name      = var.resource_group_name
-  location                 = var.location
-  account_tier             = var.account_tier
-  account_replication_type = var.replication_type
-  access_tier              = var.access_tier
-  min_tls_version          = "TLS1_2"
-  tags                     = var.tags
+  name                          = var.name
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  account_tier                  = var.account_tier
+  account_replication_type      = var.replication_type
+  access_tier                   = var.access_tier
+  min_tls_version               = "TLS1_2"
+  https_traffic_only_enabled    = true
+  allow_nested_items_to_be_public = false
+  shared_access_key_enabled     = false
+  tags                          = var.tags
 
   blob_properties {
     versioning_enabled = var.enable_versioning
@@ -30,6 +33,10 @@ resource "azurerm_storage_account" "main" {
         days = var.soft_delete_days
       }
     }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

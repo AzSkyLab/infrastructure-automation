@@ -1,9 +1,12 @@
 """Pattern discovery and information tools."""
 
+import logging
 from typing import Any
 
 from ..patterns.loader import load_patterns
-from ..patterns.resolver import PatternResolver
+from ..patterns.resolver import PatternResolver, normalize_optional
+
+logger = logging.getLogger(__name__)
 
 
 def _get_resolver() -> PatternResolver:
@@ -53,16 +56,8 @@ def get_pattern_details(pattern_name: str) -> dict[str, Any]:
         return {"error": f"Unknown pattern: {pattern_name}. Available: {list(patterns.keys())}"}
 
     pattern = patterns[pattern_name]
-
-    # Normalize optional config for display
     optional_raw = pattern.get("config", {}).get("optional", {})
-    if isinstance(optional_raw, list):
-        optional_config = {}
-        for item in optional_raw:
-            if isinstance(item, dict):
-                optional_config.update(item)
-    else:
-        optional_config = optional_raw
+    optional_config = normalize_optional(optional_raw)
 
     return {
         "name": pattern["name"],

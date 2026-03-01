@@ -3,9 +3,11 @@
 Ported from scripts/resolve-pattern.py for use in the MCP server.
 """
 
-import json
+import logging
+import re
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
 # Default sizes by environment (no external sizing-defaults.yaml needed)
 DEFAULT_SIZES = {
@@ -14,11 +16,39 @@ DEFAULT_SIZES = {
     "prod": "medium",
 }
 
+VALID_SIZES = ("small", "medium", "large")
+
+VALID_ENVIRONMENTS = ("dev", "staging", "prod")
+
 # Conditional features by environment
 CONDITIONAL_FEATURES = {
     "enable_diagnostics": {"dev": False, "staging": True, "prod": True},
     "enable_access_review": {"dev": False, "staging": False, "prod": True},
 }
+
+# Validation pattern for state key path components
+_SAFE_PATH_COMPONENT = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _sanitize_path_component(value: str, field_name: str) -> str:
+    """Validate a value is safe for use in file/state paths."""
+    if not _SAFE_PATH_COMPONENT.match(value):
+        raise ValueError(
+            f"Invalid {field_name}: {value!r}. "
+            "Only alphanumeric, hyphens, and underscores are allowed."
+        )
+    return value
+
+
+def normalize_optional(optional_raw: list | dict) -> dict[str, Any]:
+    """Normalize optional config from YAML (list or dict format)."""
+    if isinstance(optional_raw, list):
+        result: dict[str, Any] = {}
+        for item in optional_raw:
+            if isinstance(item, dict):
+                result.update(item)
+        return result
+    return optional_raw if isinstance(optional_raw, dict) else {}
 
 
 class PatternResolver:
@@ -49,9 +79,16 @@ class PatternResolver:
             )
             return {"valid": False, "errors": errors, "warnings": warnings}
 
-        if environment not in ("dev", "staging", "prod"):
+        if environment not in VALID_ENVIRONMENTS:
             errors.append(
-                f"Invalid environment: {environment}. Must be dev, staging, or prod"
+                f"Invalid environment: {environment}. Must be one of: {', '.join(VALID_ENVIRONMENTS)}"
+            )
+
+        # Validate size if provided
+        size = config.get("size")
+        if size and size not in VALID_SIZES:
+            errors.append(
+                f"Invalid size: {size}. Must be one of: {', '.join(VALID_SIZES)}"
             )
 
         pattern = self.patterns[pattern_name]
@@ -110,7 +147,7 @@ class PatternResolver:
 
         # Apply optional config with defaults
         optional_raw = pattern.get("config", {}).get("optional", {})
-        optional_config = self._normalize_optional(optional_raw)
+        optional_config = normalize_optional(optional_raw)
 
         for key, spec in optional_config.items():
             if key in config:
@@ -123,6 +160,10 @@ class PatternResolver:
             if feature not in tfvars:
                 tfvars[feature] = env_values.get(environment, False)
 
+        logger.info(
+            "Resolved %s/%s for project %s",
+            pattern_name, environment, metadata.get("project"),
+        )
         return tfvars
 
     def estimate_cost(
@@ -131,6 +172,12 @@ class PatternResolver:
         """Get estimated monthly cost for a pattern configuration."""
         if pattern_name not in self.patterns:
             return {"error": f"Unknown pattern: {pattern_name}"}
+
+        if environment not in VALID_ENVIRONMENTS:
+            return {"error": f"Invalid environment: {environment}"}
+
+        if size and size not in VALID_SIZES:
+            return {"error": f"Invalid size: {size}"}
 
         pattern = self.patterns[pattern_name]
         resolved_size = size or DEFAULT_SIZES.get(environment, "small")
@@ -154,14 +201,19 @@ class PatternResolver:
         metadata: dict[str, Any],
     ) -> str:
         """Compute the Terraform state key for a deployment."""
-        business_unit = metadata.get("business_unit", "default")
-        project = metadata.get("project", "unknown")
-        name = config.get("name", pattern_name)
-        return f"{business_unit}/{environment}/{project}/{pattern_name}-{name}/terraform.tfstate"
+        business_unit = _sanitize_path_component(
+            metadata.get("business_unit", "default"), "business_unit"
+        )
+        project = _sanitize_path_component(
+            metadata.get("project", "unknown"), "project"
+        )
+        name = _sanitize_path_component(
+            config.get("name", pattern_name), "name"
+        )
+        _sanitize_path_component(pattern_name, "pattern_name")
+        _sanitize_path_component(environment, "environment")
 
-    def to_tfvars_json(self, tfvars: dict[str, Any]) -> str:
-        """Convert tfvars dict to JSON string for terraform.tfvars.json."""
-        return json.dumps(tfvars, indent=2)
+        return f"{business_unit}/{environment}/{project}/{pattern_name}-{name}/terraform.tfstate"
 
     def _resolve_sizing(
         self, pattern: dict[str, Any], size: str, environment: str
@@ -171,15 +223,3 @@ class PatternResolver:
         if size in sizing and environment in sizing[size]:
             return sizing[size][environment].copy()
         return {}
-
-    def _normalize_optional(
-        self, optional_raw: list | dict,
-    ) -> dict[str, Any]:
-        """Normalize optional config from YAML (list or dict format)."""
-        if isinstance(optional_raw, list):
-            result: dict[str, Any] = {}
-            for item in optional_raw:
-                if isinstance(item, dict):
-                    result.update(item)
-            return result
-        return optional_raw if isinstance(optional_raw, dict) else {}

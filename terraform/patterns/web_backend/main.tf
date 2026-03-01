@@ -7,7 +7,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0"
+      version = "~> 4.0"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -103,7 +103,7 @@ module "key_vault" {
   }
 }
 
-# 5. Container App
+# 5. Container App (with managed identity for Key Vault access)
 module "container_app" {
   source                       = "../../modules/container_app"
   name                         = module.naming_app.name
@@ -118,6 +118,7 @@ module "container_app" {
   enable_ingress               = true
   external_ingress             = var.external_ingress
   target_port                  = var.target_port
+  enable_managed_identity      = true
   tags                         = module.naming_app.tags
 
   environment_variables = merge(var.environment_variables, {
@@ -127,7 +128,14 @@ module "container_app" {
   })
 }
 
-# 6. Security Groups
+# 6. RBAC: Container App managed identity -> Key Vault Secrets User
+resource "azurerm_role_assignment" "app_keyvault_access" {
+  scope                = module.key_vault.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = module.container_app.principal_id
+}
+
+# 7. Security Groups
 module "security_groups" {
   source       = "../../modules/security_groups"
   project      = var.project
@@ -139,34 +147,41 @@ module "security_groups" {
   ]
 }
 
-# 7. RBAC Assignments
+# 8. RBAC Assignments (resource-scoped, not resource group-scoped)
 module "rbac" {
   source = "../../modules/rbac_assignments"
   assignments = [
+    # Readers get read access to individual resources
     {
       principal_id         = module.security_groups.group_ids["backend-readers"]
       role_definition_name = "Reader"
-      scope                = module.resource_group.id
+      scope                = module.container_app.id
     },
     {
       principal_id         = module.security_groups.group_ids["backend-readers"]
       role_definition_name = "Key Vault Secrets User"
       scope                = module.key_vault.id
     },
+    # Admins get scoped access to individual resources
     {
       principal_id         = module.security_groups.group_ids["backend-admins"]
       role_definition_name = "Contributor"
-      scope                = module.resource_group.id
+      scope                = module.container_app.id
     },
     {
       principal_id         = module.security_groups.group_ids["backend-admins"]
       role_definition_name = "Key Vault Secrets Officer"
       scope                = module.key_vault.id
     },
+    {
+      principal_id         = module.security_groups.group_ids["backend-admins"]
+      role_definition_name = "Reader"
+      scope                = module.postgresql.id
+    },
   ]
 }
 
-# 8. Diagnostic Settings (optional)
+# 9. Diagnostic Settings (optional)
 module "diagnostics_app" {
   source = "../../modules/diagnostic_settings"
   count  = var.enable_diagnostics ? 1 : 0

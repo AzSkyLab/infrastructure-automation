@@ -8,6 +8,11 @@ variable "project" {
 variable "environment" {
   description = "Environment (dev, staging, prod)"
   type        = string
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be 'dev', 'staging', or 'prod'."
+  }
 }
 
 variable "name" {
@@ -30,6 +35,11 @@ variable "business_unit" {
 variable "owners" {
   description = "List of owner email addresses"
   type        = list(string)
+
+  validation {
+    condition     = length(var.owners) > 0
+    error_message = "At least one owner email is required."
+  }
 }
 
 # Container App settings
@@ -66,7 +76,7 @@ variable "max_replicas" {
 variable "external_ingress" {
   description = "Allow external ingress"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "target_port" {
@@ -86,6 +96,11 @@ variable "postgresql_version" {
   description = "PostgreSQL version"
   type        = string
   default     = "16"
+
+  validation {
+    condition     = contains(["13", "14", "15", "16", "17"], var.postgresql_version)
+    error_message = "PostgreSQL version must be one of: 13, 14, 15, 16, 17."
+  }
 }
 
 variable "postgresql_sku" {
@@ -122,5 +137,5 @@ variable "enable_diagnostics" {
 variable "log_analytics_workspace_id" {
   description = "Log Analytics workspace ID for diagnostics"
   type        = string
-  default     = ""
+  default     = null
 }
