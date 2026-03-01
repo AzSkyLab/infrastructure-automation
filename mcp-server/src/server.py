@@ -30,6 +30,17 @@ mcp = FastMCP(
     description="Provision and manage Azure infrastructure through patterns",
 )
 
+# Shared resolver instance (patterns are cached after first load)
+_resolver: PatternResolver | None = None
+
+
+def _get_resolver() -> PatternResolver:
+    """Get or create the shared PatternResolver instance."""
+    global _resolver
+    if _resolver is None:
+        _resolver = PatternResolver(load_patterns())
+    return _resolver
+
 
 # --- Pattern Discovery Tools ---
 
@@ -92,7 +103,7 @@ def validate_config(
         owners: List of owner emails
         size: T-shirt size override
     """
-    resolver = PatternResolver(load_patterns())
+    resolver = _get_resolver()
 
     config: dict[str, Any] = {"name": name}
     if size:
@@ -267,7 +278,7 @@ async def list_deployments(
 def main():
     """Run the MCP server."""
     transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
-    host = os.environ.get("MCP_HOST", "0.0.0.0")
+    host = os.environ.get("MCP_HOST", "127.0.0.1")
     port = int(os.environ.get("MCP_PORT", "8000"))
 
     # Eagerly load patterns at startup

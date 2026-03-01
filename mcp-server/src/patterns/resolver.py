@@ -97,7 +97,9 @@ class PatternResolver:
             if field not in config:
                 errors.append(f"Missing required config field: {field}")
 
-        if metadata:
+        if metadata is None:
+            errors.append("Metadata is required")
+        else:
             for field in ("project", "environment", "business_unit", "owners"):
                 if field not in metadata:
                     errors.append(f"Missing required metadata field: {field}")

@@ -297,6 +297,8 @@ class GitHubClient:
 
     async def get_workflow_run(self, run_id: int) -> dict[str, Any]:
         """Get details for a specific workflow run."""
+        if not isinstance(run_id, int) or run_id <= 0:
+            raise ValueError(f"run_id must be a positive integer, got: {run_id!r}")
         if not self.infra_repo:
             raise RuntimeError("INFRA_REPO not configured")
 

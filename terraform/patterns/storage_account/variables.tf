@@ -78,13 +78,13 @@ variable "access_tier" {
 variable "enable_versioning" {
   description = "Enable blob versioning"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "soft_delete_days" {
   description = "Soft delete retention days (0 to disable)"
   type        = number
-  default     = 0
+  default     = 7
 }
 
 variable "containers" {
@@ -103,4 +103,10 @@ variable "log_analytics_workspace_id" {
   description = "Log Analytics workspace ID for diagnostics"
   type        = string
   default     = null
+}
+
+variable "enable_access_review" {
+  description = "Enable access review (typically prod only)"
+  type        = bool
+  default     = false
 }

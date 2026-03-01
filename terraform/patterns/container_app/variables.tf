@@ -113,3 +113,9 @@ variable "log_analytics_workspace_id" {
   type        = string
   default     = null
 }
+
+variable "enable_access_review" {
+  description = "Enable access review (typically prod only)"
+  type        = bool
+  default     = false
+}

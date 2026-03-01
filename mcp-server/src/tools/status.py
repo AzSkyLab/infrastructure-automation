@@ -27,6 +27,8 @@ async def check_status(run_id: int) -> dict[str, Any]:
     Returns:
         Dict with run status, conclusion, and URL
     """
+    if not isinstance(run_id, int) or run_id <= 0:
+        raise ValueError(f"run_id must be a positive integer, got: {run_id!r}")
     gh = _get_github_client()
     return await gh.get_workflow_run(run_id)
 

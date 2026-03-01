@@ -54,7 +54,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: provision-${{ inputs.pattern }}-${{ inputs.environment }}-${{ inputs.state_key }}
+  group: provision-${{ inputs.pattern }}-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
