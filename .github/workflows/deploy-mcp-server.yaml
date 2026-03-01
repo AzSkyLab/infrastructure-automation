@@ -116,10 +116,12 @@ jobs:
             --resource-group "rg-mcp-${DEPLOY_ENV}" \
             --image "$IMAGE" \
             --set-env-vars \
+              "MCP_TRANSPORT=streamable-http" \
               "INFRA_REPO=${{ github.repository }}" \
               "APP_INFRA_REPO=${{ github.repository_owner }}/app-infrastructure" \
               "INFRA_APP_ID=secretref:infra-app-id" \
-              "INFRA_APP_PRIVATE_KEY=secretref:infra-app-private-key"
+              "INFRA_APP_PRIVATE_KEY=secretref:infra-app-private-key" \
+            --remove-env-vars PORT NODE_ENV
 
       - name: Health Check
         env:

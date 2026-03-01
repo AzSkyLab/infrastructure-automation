@@ -25,9 +25,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
+host = os.environ.get("MCP_HOST", "127.0.0.1")
+port = int(os.environ.get("MCP_PORT", "8000"))
+
 mcp = FastMCP(
     "Infrastructure Self-Service",
-    description="Provision and manage Azure infrastructure through patterns",
+    instructions="Provision and manage Azure infrastructure through patterns",
+    host=host,
+    port=port,
 )
 
 # Shared resolver instance (patterns are cached after first load)
@@ -277,18 +283,11 @@ async def list_deployments(
 
 def main():
     """Run the MCP server."""
-    transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
-    host = os.environ.get("MCP_HOST", "127.0.0.1")
-    port = int(os.environ.get("MCP_PORT", "8000"))
-
     # Eagerly load patterns at startup
     patterns = load_patterns()
     logger.info("Server starting with %d patterns loaded", len(patterns))
 
-    if transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        mcp.run(transport="streamable-http", host=host, port=port)
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
