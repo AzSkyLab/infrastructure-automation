@@ -1,6 +1,6 @@
 name: key_vault
 description: |
-  Azure Key Vault with RBAC authorization, security groups, and optional diagnostics.
+  Azure Key Vault with RBAC authorization, security groups, and role assignments.
   Stores secrets with Secrets User/Officer role assignments.
 category: single-resource
 components:
@@ -8,24 +8,40 @@ components:
   - key-vault
   - security-groups
   - rbac-assignments
-  - diagnostic-settings
 use_cases:
   - Application secret management
   - Certificate storage
   - Encryption key management
 sizing:
   small:
+    prototype: { sku_name: "standard" }
     dev: { sku_name: "standard" }
-    staging: { sku_name: "standard", enable_diagnostics: true }
-    prod: { sku_name: "standard", enable_diagnostics: true }
+    tst: { sku_name: "standard" }
+    stg: { sku_name: "standard" }
+    prd: { sku_name: "standard" }
   medium:
+    prototype: { sku_name: "standard" }
     dev: { sku_name: "standard" }
-    staging: { sku_name: "premium", enable_diagnostics: true }
-    prod: { sku_name: "premium", enable_diagnostics: true }
+    tst: { sku_name: "standard" }
+    stg: { sku_name: "premium" }
+    prd: { sku_name: "premium" }
   large:
+    prototype: { sku_name: "premium" }
     dev: { sku_name: "premium" }
-    staging: { sku_name: "premium", enable_diagnostics: true }
-    prod: { sku_name: "premium", enable_diagnostics: true }
+    tst: { sku_name: "premium" }
+    stg: { sku_name: "premium" }
+    prd: { sku_name: "premium" }
+  xlarge:
+    prototype: { sku_name: "premium" }
+    dev: { sku_name: "premium" }
+    tst: { sku_name: "premium" }
+    stg: { sku_name: "premium" }
+    prd: { sku_name: "premium" }
+tier_defaults:
+  1: { sku_name: "premium", purge_protection_enabled: true, soft_delete_retention_days: 90 }
+  2: { sku_name: "premium", purge_protection_enabled: true, soft_delete_retention_days: 30 }
+  3: { sku_name: "standard", purge_protection_enabled: true }
+  4: { sku_name: "standard" }
 config:
   required:
     - name
@@ -34,16 +50,3 @@ config:
         type: string
         default: "standard"
         description: Key Vault SKU (standard or premium)
-estimated_costs:
-  small:
-    dev: 1
-    staging: 5
-    prod: 10
-  medium:
-    dev: 5
-    staging: 15
-    prod: 25
-  large:
-    dev: 15
-    staging: 25
-    prod: 50

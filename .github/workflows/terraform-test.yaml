@@ -1,243 +1,196 @@
-# Terraform Tests with Smart Detection
+# Terraform Tests (Orchestration Hub)
 #
-# Runs terraform validate for changed modules and patterns.
-# Smart detection: only tests affected components.
+# Validates pattern YAML definitions and MCP server code.
+# Individual module/pattern validation happens in their own repos.
 
-name: Terraform Tests
+name: Validate
 
 on:
   workflow_dispatch:
-    inputs:
-      test_type:
-        description: 'Test type to run'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - changed-only
-
   pull_request:
     paths:
-      - 'terraform/**'
       - 'config/patterns/**'
+      - 'mcp-server/**'
       - '.github/workflows/terraform-test.yaml'
-
-  workflow_call:
-    inputs:
-      pattern_name:
-        description: 'Pattern to validate for release'
-        required: true
-        type: string
-    outputs:
-      test_passed:
-        description: 'Whether tests passed'
-        value: ${{ jobs.summary.outputs.test_passed }}
+  push:
+    branches: [main]
+    paths:
+      - 'config/patterns/**'
+      - 'mcp-server/**'
 
 permissions:
   contents: read
 
-env:
-  TERRAFORM_VERSION: '1.6.0'
-  TF_IN_AUTOMATION: 'true'
-
 jobs:
-  detect-changes:
-    name: Detect Changes
+  validate-yamls:
+    name: Validate Pattern YAMLs
     runs-on: ubuntu-latest
-    outputs:
-      modules_to_test: ${{ steps.detect.outputs.modules_to_test }}
-      patterns_to_test: ${{ steps.detect.outputs.patterns_to_test }}
-      run_all: ${{ steps.detect.outputs.run_all }}
-      has_changes: ${{ steps.detect.outputs.has_changes }}
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Detect changed files and determine tests
-        id: detect
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TEST_TYPE: ${{ inputs.test_type }}
-          INPUT_PATTERN_NAME: ${{ inputs.pattern_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate pattern YAML structure
         run: |
-          # Pattern -> Module dependencies
-          declare -A PATTERN_MODULES=(
-            ["key_vault"]="naming resource_group key_vault security_groups rbac_assignments diagnostic_settings"
-            ["storage_account"]="naming resource_group storage_account security_groups rbac_assignments diagnostic_settings"
-            ["postgresql"]="naming resource_group postgresql key_vault security_groups rbac_assignments diagnostic_settings"
-            ["container_app"]="naming resource_group container_app security_groups rbac_assignments diagnostic_settings"
-            ["web_backend"]="naming resource_group container_app postgresql key_vault security_groups rbac_assignments diagnostic_settings"
+          python3 << 'EOF'
+          import yaml
+          import sys
+          from pathlib import Path
+
+          errors = []
+          required_fields = ['name', 'description', 'category', 'components', 'sizing', 'config']
+          valid_categories = ['single-resource', 'composite']
+          valid_sizes = ['small', 'medium', 'large', 'xlarge']
+          valid_envs = ['prototype', 'dev', 'tst', 'stg', 'prd']
+
+          for f in sorted(Path('config/patterns').glob('*.yaml')):
+              with open(f) as fh:
+                  try:
+                      data = yaml.safe_load(fh)
+                  except yaml.YAMLError as e:
+                      errors.append(f"{f.name}: Invalid YAML: {e}")
+                      continue
+
+              if not data:
+                  errors.append(f"{f.name}: Empty file")
+                  continue
+
+              # Check required fields
+              for field in required_fields:
+                  if field not in data:
+                      errors.append(f"{f.name}: Missing required field: {field}")
+
+              # Validate category
+              if data.get('category') not in valid_categories:
+                  errors.append(f"{f.name}: Invalid category: {data.get('category')}")
+
+              # Validate sizing has at least small/medium/large
+              sizing = data.get('sizing', {})
+              for size in ['small', 'medium', 'large']:
+                  if size not in sizing:
+                      errors.append(f"{f.name}: Missing sizing: {size}")
+
+              # Validate each size has dev/staging/prod
+              for size_name, size_data in sizing.items():
+                  if size_name not in valid_sizes:
+                      errors.append(f"{f.name}: Invalid size: {size_name}")
+                  elif isinstance(size_data, dict):
+                      for env in valid_envs:
+                          if env not in size_data:
+                              errors.append(f"{f.name}: Missing env '{env}' in size '{size_name}'")
+
+              print(f"  {f.name}: OK ({data.get('category')})")
+
+          if errors:
+              print("\nErrors:")
+              for e in errors:
+                  print(f"  ERROR: {e}")
+              sys.exit(1)
+          else:
+              print(f"\nAll {len(list(Path('config/patterns').glob('*.yaml')))} pattern YAMLs valid!")
+          EOF
+
+  validate-mcp-server:
+    name: Validate MCP Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install MCP server
+        working-directory: mcp-server
+        run: pip install -e .
+
+      - name: Check imports
+        run: python -c "from mcp_server.src.patterns.loader import load_patterns; print(f'Loaded {len(load_patterns())} patterns')"
+
+      - name: Check resolver
+        run: |
+          python3 << 'PYEOF'
+          from mcp_server.src.patterns.loader import load_patterns
+          from mcp_server.src.patterns.resolver import PatternResolver
+
+          patterns = load_patterns()
+          resolver = PatternResolver(patterns)
+
+          # Test validation with new fields
+          result = resolver.validate_config(
+              "key_vault", "dev",
+              {"name": "test"},
+              {
+                  "project": "testproj",
+                  "environment": "dev",
+                  "business_unit": "eng",
+                  "owners": ["test@example.com"],
+                  "application_id": "APP001",
+                  "application_name": "Test App",
+                  "tier": 3,
+              }
           )
+          assert result["valid"], f"Validation failed: {result['errors']}"
+          print("Resolver validation: OK")
 
-          SHARED_MODULES="naming security_groups rbac_assignments"
+          # Test resolution includes new fields
+          tfvars = resolver.resolve(
+              "key_vault", "dev",
+              {"name": "test"},
+              {
+                  "project": "testproj",
+                  "environment": "dev",
+                  "business_unit": "eng",
+                  "owners": ["test@example.com"],
+                  "application_id": "APP001",
+                  "application_name": "Test App",
+                  "tier": 3,
+              }
+          )
+          assert tfvars["application_id"] == "APP001"
+          assert tfvars["tier"] == 3
+          print("Resolver resolution: OK")
 
-          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
-            if [ "$INPUT_TEST_TYPE" == "all" ]; then
-              echo "run_all=true" >> $GITHUB_OUTPUT
-              echo "has_changes=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
+          # Test XL sizing
+          result = resolver.validate_config(
+              "key_vault", "dev",
+              {"name": "test", "size": "xlarge"},
+              {
+                  "project": "testproj",
+                  "environment": "dev",
+                  "business_unit": "eng",
+                  "owners": ["test@example.com"],
+                  "application_id": "APP001",
+                  "application_name": "Test App",
+              }
+          )
+          assert result["valid"], f"XL validation failed: {result['errors']}"
+          print("XL sizing validation: OK")
 
-          if [ -n "$INPUT_PATTERN_NAME" ]; then
-            # Validate pattern name format
-            if [[ ! "$INPUT_PATTERN_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-              echo "::error::Invalid pattern name format"
-              exit 1
-            fi
-            echo "patterns_to_test=[\"${INPUT_PATTERN_NAME}\"]" >> $GITHUB_OUTPUT
-            echo "modules_to_test=[]" >> $GITHUB_OUTPUT
-            echo "run_all=false" >> $GITHUB_OUTPUT
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+          # Test prototype environment
+          result = resolver.validate_config(
+              "key_vault", "prototype",
+              {"name": "test"},
+              {
+                  "project": "testproj",
+                  "environment": "prototype",
+                  "business_unit": "eng",
+                  "owners": ["test@example.com"],
+                  "application_id": "APP001",
+                  "application_name": "Test App",
+              }
+          )
+          assert result["valid"], f"Prototype validation failed: {result['errors']}"
+          print("Prototype environment validation: OK")
 
-          if [ "$EVENT_NAME" == "pull_request" ]; then
-            BASE_SHA="$PR_BASE_SHA"
-          else
-            BASE_SHA="HEAD~1"
-          fi
-
-          CHANGED_FILES=$(git diff --name-only $BASE_SHA HEAD 2>/dev/null || echo "")
-
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Check for shared module changes -> run all
-          for file in $CHANGED_FILES; do
-            for shared in $SHARED_MODULES; do
-              if [[ "$file" =~ terraform/modules/$shared/ ]]; then
-                echo "Shared module $shared changed - running all"
-                echo "run_all=true" >> $GITHUB_OUTPUT
-                echo "has_changes=true" >> $GITHUB_OUTPUT
-                exit 0
-              fi
-            done
-          done
-
-          # Detect changed modules and patterns
-          CHANGED_MODULES=""
-          CHANGED_PATTERNS=""
-          for file in $CHANGED_FILES; do
-            if [[ "$file" =~ terraform/modules/([^/]+)/ ]]; then
-              module="${BASH_REMATCH[1]}"
-              [[ ! "$CHANGED_MODULES" =~ "$module" ]] && CHANGED_MODULES="$CHANGED_MODULES $module"
-            fi
-            if [[ "$file" =~ terraform/patterns/([^/]+)/ ]] || [[ "$file" =~ config/patterns/([^/]+)\.yaml ]]; then
-              pattern="${BASH_REMATCH[1]}"
-              [[ ! "$CHANGED_PATTERNS" =~ "$pattern" ]] && CHANGED_PATTERNS="$CHANGED_PATTERNS $pattern"
-            fi
-          done
-
-          # Add dependent patterns for changed modules
-          PATTERNS_TO_TEST="$CHANGED_PATTERNS"
-          for module in $CHANGED_MODULES; do
-            for pattern in "${!PATTERN_MODULES[@]}"; do
-              if [[ "${PATTERN_MODULES[$pattern]}" =~ "$module" ]]; then
-                [[ ! "$PATTERNS_TO_TEST" =~ "$pattern" ]] && PATTERNS_TO_TEST="$PATTERNS_TO_TEST $pattern"
-              fi
-            done
-          done
-
-          CHANGED_MODULES=$(echo $CHANGED_MODULES | xargs)
-          PATTERNS_TO_TEST=$(echo $PATTERNS_TO_TEST | xargs)
-
-          MODULES_JSON=$([ -n "$CHANGED_MODULES" ] && echo $CHANGED_MODULES | tr ' ' '\n' | jq -R . | jq -sc . || echo "[]")
-          PATTERNS_JSON=$([ -n "$PATTERNS_TO_TEST" ] && echo $PATTERNS_TO_TEST | tr ' ' '\n' | jq -R . | jq -sc . || echo "[]")
-
-          echo "modules_to_test=$MODULES_JSON" >> $GITHUB_OUTPUT
-          echo "patterns_to_test=$PATTERNS_JSON" >> $GITHUB_OUTPUT
-          echo "run_all=false" >> $GITHUB_OUTPUT
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-
-  validate-modules:
-    name: Validate Module - ${{ matrix.module }}
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has_changes == 'true'
-
-    strategy:
-      fail-fast: false
-      matrix:
-        module: ${{ needs.detect-changes.outputs.run_all == 'true' && fromJSON('["resource_group", "key_vault", "storage_account", "postgresql", "container_app", "naming", "security_groups", "rbac_assignments", "diagnostic_settings"]') || fromJSON(needs.detect-changes.outputs.modules_to_test || '[]') }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform Validate
-        working-directory: terraform/modules/${{ matrix.module }}
-        run: |
-          terraform init -backend=false
-          terraform validate
-
-  validate-patterns:
-    name: Validate Pattern - ${{ matrix.pattern }}
-    runs-on: ubuntu-latest
-    needs: [detect-changes, validate-modules]
-    if: |
-      always() &&
-      (needs.validate-modules.result == 'success' || needs.validate-modules.result == 'skipped') &&
-      needs.detect-changes.outputs.has_changes == 'true'
-
-    strategy:
-      fail-fast: false
-      matrix:
-        pattern: ${{ needs.detect-changes.outputs.run_all == 'true' && fromJSON('["key_vault", "storage_account", "postgresql", "container_app", "web_backend"]') || fromJSON(needs.detect-changes.outputs.patterns_to_test || '[]') }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform Validate
-        working-directory: terraform/patterns/${{ matrix.pattern }}
-        run: |
-          terraform init -backend=false
-          terraform validate
-
-  summary:
-    name: Test Summary
-    runs-on: ubuntu-latest
-    needs: [detect-changes, validate-modules, validate-patterns]
-    if: always()
-    outputs:
-      test_passed: ${{ steps.result.outputs.passed }}
-
-    steps:
-      - name: Determine result
-        id: result
-        env:
-          HAS_CHANGES: ${{ needs.detect-changes.outputs.has_changes }}
-          MODULES_RESULT: ${{ needs.validate-modules.result }}
-          PATTERNS_RESULT: ${{ needs.validate-patterns.result }}
-        run: |
-          if [ "$HAS_CHANGES" != "true" ]; then
-            echo "passed=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$MODULES_RESULT" != "success" ] && [ "$MODULES_RESULT" != "skipped" ]; then
-            echo "passed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$PATTERNS_RESULT" != "success" ] && [ "$PATTERNS_RESULT" != "skipped" ]; then
-            echo "passed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "passed=true" >> $GITHUB_OUTPUT
+          print("\nAll resolver checks passed!")
+          PYEOF

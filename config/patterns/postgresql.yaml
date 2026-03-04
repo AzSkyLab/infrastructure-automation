@@ -1,7 +1,7 @@
 name: postgresql
 description: |
   PostgreSQL Flexible Server with Key Vault for connection secrets,
-  security groups, and optional diagnostics.
+  security groups, and role assignments.
 category: single-resource
 components:
   - resource-group
@@ -9,24 +9,40 @@ components:
   - key-vault
   - security-groups
   - rbac-assignments
-  - diagnostic-settings
 use_cases:
   - Relational database for web applications
   - Backend data store
   - Reporting and analytics database
 sizing:
   small:
+    prototype: { sku_name: "B_Standard_B1ms", storage_mb: 32768, backup_retention_days: 7 }
     dev: { sku_name: "B_Standard_B1ms", storage_mb: 32768, backup_retention_days: 7 }
-    staging: { sku_name: "B_Standard_B2s", storage_mb: 65536, backup_retention_days: 14, enable_diagnostics: true }
-    prod: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 30, geo_redundant_backup: true, enable_diagnostics: true }
+    tst: { sku_name: "B_Standard_B1ms", storage_mb: 32768, backup_retention_days: 7 }
+    stg: { sku_name: "B_Standard_B2s", storage_mb: 65536, backup_retention_days: 14 }
+    prd: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 30, geo_redundant_backup: true }
   medium:
+    prototype: { sku_name: "B_Standard_B2s", storage_mb: 65536, backup_retention_days: 7 }
     dev: { sku_name: "B_Standard_B2s", storage_mb: 65536, backup_retention_days: 7 }
-    staging: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 14, enable_diagnostics: true }
-    prod: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 30, geo_redundant_backup: true, enable_diagnostics: true }
+    tst: { sku_name: "B_Standard_B2s", storage_mb: 65536, backup_retention_days: 7 }
+    stg: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 14 }
+    prd: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 30, geo_redundant_backup: true }
   large:
+    prototype: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 7 }
     dev: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 7 }
-    staging: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 30, enable_diagnostics: true }
-    prod: { sku_name: "GP_Standard_D8s_v3", storage_mb: 524288, backup_retention_days: 30, geo_redundant_backup: true, enable_diagnostics: true }
+    tst: { sku_name: "GP_Standard_D2s_v3", storage_mb: 131072, backup_retention_days: 7 }
+    stg: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 30 }
+    prd: { sku_name: "GP_Standard_D8s_v3", storage_mb: 524288, backup_retention_days: 30, geo_redundant_backup: true }
+  xlarge:
+    prototype: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 14 }
+    dev: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 14 }
+    tst: { sku_name: "GP_Standard_D4s_v3", storage_mb: 262144, backup_retention_days: 14 }
+    stg: { sku_name: "GP_Standard_D8s_v3", storage_mb: 524288, backup_retention_days: 30 }
+    prd: { sku_name: "GP_Standard_D16s_v3", storage_mb: 1048576, backup_retention_days: 35, geo_redundant_backup: true }
+tier_defaults:
+  1: { geo_redundant_backup: true, backup_retention_days: 35 }
+  2: { geo_redundant_backup: true, backup_retention_days: 30 }
+  3: { backup_retention_days: 14 }
+  4: { backup_retention_days: 7 }
 config:
   required:
     - name
@@ -35,16 +51,3 @@ config:
         type: string
         default: "16"
         description: PostgreSQL version
-estimated_costs:
-  small:
-    dev: 15
-    staging: 40
-    prod: 150
-  medium:
-    dev: 40
-    staging: 150
-    prod: 300
-  large:
-    dev: 150
-    staging: 300
-    prod: 600

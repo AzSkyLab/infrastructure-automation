@@ -1,5 +1,5 @@
 # terraform/patterns/container_app/main.tf
-# Container App pattern: resource_group + naming + container_app + security_groups + rbac + diagnostics
+# Container App pattern: resource_group + naming + container_app + security_groups + rbac
 
 terraform {
   required_version = ">= 1.5.0"
@@ -25,27 +25,35 @@ provider "azuread" {}
 
 # 1. Naming
 module "naming_app" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "container_app"
-  name          = var.name
-  business_unit = var.business_unit
-  pattern_name  = "container-app"
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "container_app"
+  name             = var.name
+  business_unit    = var.business_unit
+  pattern_name     = "container-app"
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 module "naming_env" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "container_env"
-  name          = var.name
-  business_unit = var.business_unit
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "container_env"
+  name             = var.name
+  business_unit    = var.business_unit
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 # 2. Resource Group
 module "resource_group" {
-  source   = "../../modules/resource_group"
+  source   = "github.com/csGIT34/terraform-azurerm-resource-group?ref=v1.0.0"
   name     = module.naming_app.resource_group_name
   location = var.location
   tags     = module.naming_app.tags
@@ -53,7 +61,7 @@ module "resource_group" {
 
 # 3. Container App
 module "container_app" {
-  source                       = "../../modules/container_app"
+  source                       = "github.com/csGIT34/terraform-azurerm-container-app?ref=v1.0.0"
   name                         = module.naming_app.name
   location                     = var.location
   resource_group_name          = module.resource_group.name
@@ -73,7 +81,7 @@ module "container_app" {
 
 # 4. Security Groups
 module "security_groups" {
-  source       = "../../modules/security_groups"
+  source       = "github.com/csGIT34/terraform-azurerm-security-groups?ref=v1.0.0"
   project      = var.project
   environment  = var.environment
   owner_emails = var.owners
@@ -85,7 +93,7 @@ module "security_groups" {
 
 # 5. RBAC Assignments
 module "rbac" {
-  source = "../../modules/rbac_assignments"
+  source = "github.com/csGIT34/terraform-azurerm-rbac-assignments?ref=v1.0.0"
   assignments = [
     {
       principal_id         = module.security_groups.group_ids["app-readers"]
@@ -98,16 +106,4 @@ module "rbac" {
       scope                = module.container_app.id
     },
   ]
-}
-
-# 6. Diagnostic Settings (optional)
-module "diagnostics" {
-  source = "../../modules/diagnostic_settings"
-  count  = var.enable_diagnostics ? 1 : 0
-
-  name                       = module.naming_app.name
-  target_resource_id         = module.container_app.id
-  log_analytics_workspace_id = var.log_analytics_workspace_id
-  logs                       = ["ContainerAppConsoleLogs", "ContainerAppSystemLogs"]
-  metrics                    = ["AllMetrics"]
 }

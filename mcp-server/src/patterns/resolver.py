@@ -11,20 +11,18 @@ logger = logging.getLogger(__name__)
 
 # Default sizes by environment (no external sizing-defaults.yaml needed)
 DEFAULT_SIZES = {
+    "prototype": "small",
     "dev": "small",
-    "staging": "medium",
-    "prod": "medium",
+    "tst": "small",
+    "stg": "medium",
+    "prd": "medium",
 }
 
-VALID_SIZES = ("small", "medium", "large")
+VALID_SIZES = ("small", "medium", "large", "xlarge")
 
-VALID_ENVIRONMENTS = ("dev", "staging", "prod")
+VALID_ENVIRONMENTS = ("prototype", "dev", "tst", "stg", "prd")
 
-# Conditional features by environment
-CONDITIONAL_FEATURES = {
-    "enable_diagnostics": {"dev": False, "staging": True, "prod": True},
-    "enable_access_review": {"dev": False, "staging": False, "prod": True},
-}
+VALID_TIERS = (1, 2, 3, 4)
 
 # Validation pattern for state key path components
 _SAFE_PATH_COMPONENT = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -104,6 +102,19 @@ class PatternResolver:
                 if field not in metadata:
                     errors.append(f"Missing required metadata field: {field}")
 
+            # Validate application_id and application_name
+            if not metadata.get("application_id"):
+                errors.append("Missing required metadata field: application_id")
+            if not metadata.get("application_name"):
+                errors.append("Missing required metadata field: application_name")
+
+            # Validate tier
+            tier = metadata.get("tier", 4)
+            if tier not in VALID_TIERS:
+                errors.append(
+                    f"Invalid tier: {tier}. Must be one of: {', '.join(str(t) for t in VALID_TIERS)}"
+                )
+
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
     def resolve(
@@ -117,9 +128,9 @@ class PatternResolver:
 
         Args:
             pattern_name: Name of the pattern (e.g., "key_vault")
-            environment: Target environment (dev/staging/prod)
+            environment: Target environment (prototype/dev/tst/stg/prd)
             config: User-provided config (name, size, etc.)
-            metadata: Project metadata (project, business_unit, owners, location)
+            metadata: Project metadata (project, business_unit, owners, location, application_id, etc.)
 
         Returns:
             Dict of Terraform variable values ready for tfvars.json
@@ -142,6 +153,10 @@ class PatternResolver:
             "owners": metadata.get("owners", []),
             "location": metadata.get("location", "eastus"),
             "name": config.get("name", metadata["project"]),
+            "application_id": metadata.get("application_id", ""),
+            "application_name": metadata.get("application_name", ""),
+            "tier": metadata.get("tier", 4),
+            "cost_center": metadata.get("cost_center", ""),
         }
 
         # Merge sizing values
@@ -157,43 +172,11 @@ class PatternResolver:
             elif isinstance(spec, dict) and "default" in spec:
                 tfvars[key] = spec["default"]
 
-        # Apply conditionals
-        for feature, env_values in CONDITIONAL_FEATURES.items():
-            if feature not in tfvars:
-                tfvars[feature] = env_values.get(environment, False)
-
         logger.info(
             "Resolved %s/%s for project %s",
             pattern_name, environment, metadata.get("project"),
         )
         return tfvars
-
-    def estimate_cost(
-        self, pattern_name: str, environment: str, size: str | None = None
-    ) -> dict[str, Any]:
-        """Get estimated monthly cost for a pattern configuration."""
-        if pattern_name not in self.patterns:
-            return {"error": f"Unknown pattern: {pattern_name}"}
-
-        if environment not in VALID_ENVIRONMENTS:
-            return {"error": f"Invalid environment: {environment}"}
-
-        if size and size not in VALID_SIZES:
-            return {"error": f"Invalid size: {size}"}
-
-        pattern = self.patterns[pattern_name]
-        resolved_size = size or DEFAULT_SIZES.get(environment, "small")
-        costs = pattern.get("estimated_costs", {})
-
-        if resolved_size in costs and environment in costs[resolved_size]:
-            return {
-                "pattern": pattern_name,
-                "size": resolved_size,
-                "environment": environment,
-                "estimated_monthly_cost_usd": costs[resolved_size][environment],
-            }
-
-        return {"error": "Cost estimate not available for this configuration"}
 
     def compute_state_key(
         self,
@@ -203,6 +186,9 @@ class PatternResolver:
         metadata: dict[str, Any],
     ) -> str:
         """Compute the Terraform state key for a deployment."""
+        app_id = _sanitize_path_component(
+            metadata.get("application_id") or "unknown", "application_id"
+        )
         business_unit = _sanitize_path_component(
             metadata.get("business_unit") or "default", "business_unit"
         )
@@ -215,7 +201,7 @@ class PatternResolver:
         _sanitize_path_component(pattern_name, "pattern_name")
         _sanitize_path_component(environment, "environment")
 
-        return f"{business_unit}/{environment}/{project}/{pattern_name}-{name}/terraform.tfstate"
+        return f"{app_id}/{business_unit}/{environment}/{project}/{pattern_name}-{name}/terraform.tfstate"
 
     def _resolve_sizing(
         self, pattern: dict[str, Any], size: str, environment: str

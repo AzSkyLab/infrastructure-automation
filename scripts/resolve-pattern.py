@@ -84,8 +84,8 @@ class PatternResolver:
 
             # Validate environment
             env = meta.get("environment", "")
-            if env not in ["dev", "staging", "prod"]:
-                errors.append(f"Invalid environment: {env}. Must be dev, staging, or prod")
+            if env not in ["prototype", "dev", "tst", "stg", "prd"]:
+                errors.append(f"Invalid environment: {env}. Must be prototype, dev, tst, stg, or prd")
 
         # Validate pattern exists
         pattern_name = request.get("pattern", "")
@@ -214,28 +214,6 @@ class PatternResolver:
                 tfvars[feature] = env_values.get(environment, False)
 
         return tfvars
-
-    def get_cost_estimate(self, request: Dict) -> Dict[str, Any]:
-        """Get estimated monthly cost for a pattern request."""
-        pattern_name = request.get("pattern", "")
-        if pattern_name not in self.patterns:
-            return {"error": f"Unknown pattern: {pattern_name}"}
-
-        pattern = self.patterns[pattern_name]
-        config = request.get("config", {})
-        environment = request.get("metadata", {}).get("environment", "dev")
-        size = config.get("size", self._get_default_size(environment))
-
-        costs = pattern.get("estimated_costs", {})
-        if size in costs and environment in costs[size]:
-            return {
-                "pattern": pattern_name,
-                "size": size,
-                "environment": environment,
-                "estimated_monthly_cost_usd": costs[size][environment]
-            }
-
-        return {"error": "Cost estimate not available"}
 
     def list_patterns(self) -> Dict[str, Dict]:
         """List all available patterns."""
@@ -400,11 +378,6 @@ def main():
         help="Only validate the request, don't resolve"
     )
     parser.add_argument(
-        "--cost",
-        action="store_true",
-        help="Show cost estimate"
-    )
-    parser.add_argument(
         "--list-patterns",
         action="store_true",
         help="List available patterns"
@@ -490,15 +463,6 @@ def main():
             print(json.dumps(output, indent=2))
             return 0 if all_valid else 1
 
-        if args.cost:
-            costs = []
-            for doc in documents:
-                cost = resolver.get_cost_estimate(doc)
-                cost["action"] = doc.get("action", "create")
-                costs.append(cost)
-            print(json.dumps(costs, indent=2))
-            return 0
-
         # Multi-json output for provisioning workflow
         output = {
             "document_count": len(documents),
@@ -536,21 +500,6 @@ def main():
             for warning in validation["warnings"]:
                 print(f"  Warning: {warning}")
         return 0 if validation["valid"] else 1
-
-    # Cost estimate mode
-    if args.cost:
-        cost = resolver.get_cost_estimate(request)
-        if args.output == "json":
-            print(json.dumps(cost, indent=2))
-        else:
-            if "error" in cost:
-                print(f"Error: {cost['error']}")
-                return 1
-            print(f"Pattern: {cost['pattern']}")
-            print(f"Size: {cost['size']}")
-            print(f"Environment: {cost['environment']}")
-            print(f"Estimated monthly cost: ${cost['estimated_monthly_cost_usd']}")
-        return 0
 
     # Resolve mode
     try:

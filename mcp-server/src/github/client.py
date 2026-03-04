@@ -17,6 +17,11 @@ BRANCH_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 WORKFLOW_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+\.ya?ml$")
 PATTERN_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 STATE_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
+FOLDER_PATH_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
+
+# Max retries for conflict resolution on main branch pushes
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
 
 
 def _validate(value: str, pattern: re.Pattern, name: str) -> str:
@@ -165,104 +170,145 @@ class GitHubClient:
         logger.info("Triggered workflow %s on %s", workflow_file, self.infra_repo)
         return {"status": "triggered", "workflow": workflow_file, "inputs": inputs}
 
-    async def push_tfvars(
+    async def push_tfvars_to_main(
         self,
-        branch: str,
+        folder_path: str,
         pattern_name: str,
         tfvars_json: str,
         backend_hcl: str,
         commit_message: str,
     ) -> dict[str, Any]:
-        """Push tfvars and backend config to a branch in app-infrastructure repo."""
+        """Push tfvars and backend config to main branch in app-infrastructure repo.
+
+        Creates files at {folder_path}/{pattern_name}/terraform.tfvars.json
+        and {folder_path}/{pattern_name}/backend.hcl on main.
+
+        Retries with backoff on 409 conflicts.
+        """
         if not self.app_infra_repo:
             raise RuntimeError("APP_INFRA_REPO not configured (must be 'owner/repo' format)")
 
-        _validate(branch, BRANCH_PATTERN, "branch")
+        _validate(folder_path, FOLDER_PATH_PATTERN, "folder_path")
         _validate(pattern_name, PATTERN_NAME_PATTERN, "pattern_name")
 
         headers = await self._headers()
         client = await self._get_client()
 
-        # Ensure branch exists (create from main if not)
-        await self._ensure_branch(client, headers, branch)
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Get current main HEAD
+                ref_resp = await client.get(
+                    f"{self.base_url}/repos/{self.app_infra_repo}/git/ref/heads/main",
+                    headers=headers,
+                )
+                ref_resp.raise_for_status()
+                current_sha = ref_resp.json()["object"]["sha"]
 
-        # Get current tree SHA for the branch
-        ref_resp = await client.get(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/ref/heads/{branch}",
-            headers=headers,
-        )
-        ref_resp.raise_for_status()
-        current_sha = ref_resp.json()["object"]["sha"]
+                # Create blobs for both files
+                tfvars_blob = await self._create_blob(client, headers, tfvars_json)
+                backend_blob = await self._create_blob(client, headers, backend_hcl)
 
-        # Create blobs for both files
-        tfvars_blob = await self._create_blob(client, headers, tfvars_json)
-        backend_blob = await self._create_blob(client, headers, backend_hcl)
-
-        # Create tree with both files
-        tree_resp = await client.post(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/trees",
-            headers=headers,
-            json={
-                "base_tree": current_sha,
-                "tree": [
-                    {
-                        "path": f"{pattern_name}/terraform.tfvars.json",
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": tfvars_blob,
+                # Create tree with both files at folder_path/pattern_name/
+                tree_resp = await client.post(
+                    f"{self.base_url}/repos/{self.app_infra_repo}/git/trees",
+                    headers=headers,
+                    json={
+                        "base_tree": current_sha,
+                        "tree": [
+                            {
+                                "path": f"{folder_path}/{pattern_name}/terraform.tfvars.json",
+                                "mode": "100644",
+                                "type": "blob",
+                                "sha": tfvars_blob,
+                            },
+                            {
+                                "path": f"{folder_path}/{pattern_name}/backend.hcl",
+                                "mode": "100644",
+                                "type": "blob",
+                                "sha": backend_blob,
+                            },
+                        ],
                     },
-                    {
-                        "path": f"{pattern_name}/backend.hcl",
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": backend_blob,
+                )
+                tree_resp.raise_for_status()
+                tree_sha = tree_resp.json()["sha"]
+
+                # Create commit
+                commit_resp = await client.post(
+                    f"{self.base_url}/repos/{self.app_infra_repo}/git/commits",
+                    headers=headers,
+                    json={
+                        "message": commit_message,
+                        "tree": tree_sha,
+                        "parents": [current_sha],
                     },
-                ],
-            },
-        )
-        tree_resp.raise_for_status()
-        tree_sha = tree_resp.json()["sha"]
+                )
+                commit_resp.raise_for_status()
+                commit_sha = commit_resp.json()["sha"]
 
-        # Create commit
-        commit_resp = await client.post(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/commits",
-            headers=headers,
-            json={
-                "message": commit_message,
-                "tree": tree_sha,
-                "parents": [current_sha],
-            },
-        )
-        commit_resp.raise_for_status()
-        commit_sha = commit_resp.json()["sha"]
+                # Update main ref
+                update_resp = await client.patch(
+                    f"{self.base_url}/repos/{self.app_infra_repo}/git/refs/heads/main",
+                    headers=headers,
+                    json={"sha": commit_sha},
+                )
 
-        # Update branch ref
-        update_resp = await client.patch(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/refs/heads/{branch}",
-            headers=headers,
-            json={"sha": commit_sha},
-        )
-        update_resp.raise_for_status()
+                if update_resp.status_code == 409 and attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        "Conflict updating main (attempt %d/%d), retrying...",
+                        attempt + 1, MAX_RETRIES,
+                    )
+                    import asyncio
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    continue
 
-        logger.info("Pushed tfvars to %s branch %s", self.app_infra_repo, branch)
-        return {
-            "branch": branch,
-            "commit_sha": commit_sha,
-            "files": [
-                f"{pattern_name}/terraform.tfvars.json",
-                f"{pattern_name}/backend.hcl",
-            ],
-        }
+                update_resp.raise_for_status()
+
+                logger.info(
+                    "Pushed tfvars to %s main at %s/%s",
+                    self.app_infra_repo, folder_path, pattern_name,
+                )
+                return {
+                    "commit_sha": commit_sha,
+                    "files": [
+                        f"{folder_path}/{pattern_name}/terraform.tfvars.json",
+                        f"{folder_path}/{pattern_name}/backend.hcl",
+                    ],
+                }
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 409 and attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        "HTTP 409 conflict (attempt %d/%d), retrying...",
+                        attempt + 1, MAX_RETRIES,
+                    )
+                    import asyncio
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    continue
+                raise
+
+        raise RuntimeError(f"Failed to push to main after {MAX_RETRIES} attempts")
 
     async def get_workflow_runs(
         self,
         workflow_file: str | None = None,
         status: str | None = None,
         per_page: int = 10,
+        repo: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List recent workflow runs."""
-        if not self.infra_repo:
-            raise RuntimeError("INFRA_REPO not configured")
+        """List recent workflow runs.
+
+        Args:
+            workflow_file: Filter to a specific workflow file
+            status: Filter by status
+            per_page: Max results
+            repo: Which repo to query — "infra" (default) or "app_infra"
+        """
+        target_repo = self.app_infra_repo if repo == "app_infra" else self.infra_repo
+        if not target_repo:
+            raise RuntimeError(
+                f"{'APP_INFRA_REPO' if repo == 'app_infra' else 'INFRA_REPO'} not configured"
+            )
 
         headers = await self._headers()
         per_page = min(per_page, 100)
@@ -274,9 +320,9 @@ class GitHubClient:
 
         if workflow_file:
             _validate(workflow_file, WORKFLOW_PATTERN, "workflow_file")
-            url = f"{self.base_url}/repos/{self.infra_repo}/actions/workflows/{workflow_file}/runs"
+            url = f"{self.base_url}/repos/{target_repo}/actions/workflows/{workflow_file}/runs"
         else:
-            url = f"{self.base_url}/repos/{self.infra_repo}/actions/runs"
+            url = f"{self.base_url}/repos/{target_repo}/actions/runs"
 
         client = await self._get_client()
         resp = await client.get(url, headers=headers, params=params)
@@ -320,34 +366,6 @@ class GitHubClient:
             "updated_at": run["updated_at"],
             "html_url": run["html_url"],
         }
-
-    async def _ensure_branch(
-        self, client: httpx.AsyncClient, headers: dict, branch: str
-    ) -> None:
-        """Ensure a branch exists in app-infrastructure, creating from main if needed."""
-        resp = await client.get(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/ref/heads/{branch}",
-            headers=headers,
-        )
-        if resp.status_code == 200:
-            return
-
-        # Get main branch SHA
-        main_resp = await client.get(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/ref/heads/main",
-            headers=headers,
-        )
-        main_resp.raise_for_status()
-        main_sha = main_resp.json()["object"]["sha"]
-
-        # Create branch
-        create_resp = await client.post(
-            f"{self.base_url}/repos/{self.app_infra_repo}/git/refs",
-            headers=headers,
-            json={"ref": f"refs/heads/{branch}", "sha": main_sha},
-        )
-        create_resp.raise_for_status()
-        logger.info("Created branch %s from main", branch)
 
     async def _create_blob(
         self, client: httpx.AsyncClient, headers: dict, content: str

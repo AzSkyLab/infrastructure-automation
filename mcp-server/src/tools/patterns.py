@@ -4,14 +4,9 @@ import logging
 from typing import Any
 
 from ..patterns.loader import load_patterns
-from ..patterns.resolver import PatternResolver, normalize_optional
+from ..patterns.resolver import normalize_optional
 
 logger = logging.getLogger(__name__)
-
-
-def _get_resolver() -> PatternResolver:
-    patterns = load_patterns()
-    return PatternResolver(patterns)
 
 
 def list_patterns(category: str | None = None) -> list[dict[str, Any]]:
@@ -68,22 +63,4 @@ def get_pattern_details(pattern_name: str) -> dict[str, Any]:
         "required_config": pattern.get("config", {}).get("required", []),
         "optional_config": optional_config,
         "sizing": pattern.get("sizing", {}),
-        "estimated_costs": pattern.get("estimated_costs", {}),
     }
-
-
-def estimate_cost(
-    pattern_name: str, environment: str, size: str | None = None
-) -> dict[str, Any]:
-    """Estimate monthly cost for a pattern configuration.
-
-    Args:
-        pattern_name: Pattern name
-        environment: Target environment (dev/staging/prod)
-        size: T-shirt size (small/medium/large). Defaults based on environment.
-
-    Returns:
-        Cost estimate in USD/month
-    """
-    resolver = _get_resolver()
-    return resolver.estimate_cost(pattern_name, environment, size)

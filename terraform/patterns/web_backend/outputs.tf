@@ -30,6 +30,11 @@ output "key_vault_uri" {
   value       = module.key_vault.vault_uri
 }
 
+output "container_registry_login_server" {
+  description = "Container Registry login server"
+  value       = module.container_registry.login_server
+}
+
 output "resource_group_name" {
   description = "Resource group name"
   value       = module.resource_group.name

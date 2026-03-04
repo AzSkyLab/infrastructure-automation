@@ -10,8 +10,8 @@ variable "environment" {
   type        = string
 
   validation {
-    condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "Environment must be 'dev', 'staging', or 'prod'."
+    condition     = contains(["prototype", "dev", "tst", "stg", "prd"], var.environment)
+    error_message = "Environment must be 'prototype', 'dev', 'tst', 'stg', or 'prd'."
   }
 }
 
@@ -28,6 +28,33 @@ variable "location" {
 
 variable "business_unit" {
   description = "Business unit for tagging"
+  type        = string
+  default     = ""
+}
+
+variable "application_id" {
+  description = "Unique application identifier"
+  type        = string
+}
+
+variable "application_name" {
+  description = "Human-readable application name"
+  type        = string
+}
+
+variable "tier" {
+  description = "Application tier (1-4)"
+  type        = number
+  default     = 4
+
+  validation {
+    condition     = var.tier >= 1 && var.tier <= 4
+    error_message = "Tier must be between 1 and 4."
+  }
+}
+
+variable "cost_center" {
+  description = "Billing cost center"
   type        = string
   default     = ""
 }
@@ -63,22 +90,4 @@ variable "soft_delete_retention_days" {
   description = "Soft delete retention in days (7-90)"
   type        = number
   default     = 7
-}
-
-variable "enable_diagnostics" {
-  description = "Enable diagnostic settings"
-  type        = bool
-  default     = false
-}
-
-variable "log_analytics_workspace_id" {
-  description = "Log Analytics workspace ID for diagnostics"
-  type        = string
-  default     = null
-}
-
-variable "enable_access_review" {
-  description = "Enable access review (typically prod only)"
-  type        = bool
-  default     = false
 }

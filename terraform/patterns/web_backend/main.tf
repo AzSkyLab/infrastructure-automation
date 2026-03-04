@@ -1,6 +1,6 @@
 # terraform/patterns/web_backend/main.tf
-# Composite pattern: container_app + postgresql + key_vault
-# Provisions a web backend with a Container App, PostgreSQL database, and Key Vault for secrets
+# Composite pattern: container_app + postgresql + key_vault + container_registry
+# Provisions a full web backend stack
 
 terraform {
   required_version = ">= 1.5.0"
@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/random"
       version = ">= 3.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9"
+    }
   }
 
   backend "azurerm" {}
@@ -30,53 +34,92 @@ provider "azuread" {}
 
 # 1. Naming
 module "naming_app" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "container_app"
-  name          = var.name
-  business_unit = var.business_unit
-  pattern_name  = "web-backend"
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "container_app"
+  name             = var.name
+  business_unit    = var.business_unit
+  pattern_name     = "web-backend"
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 module "naming_env" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "container_env"
-  name          = var.name
-  business_unit = var.business_unit
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "container_env"
+  name             = var.name
+  business_unit    = var.business_unit
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 module "naming_pg" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "postgresql"
-  name          = var.name
-  business_unit = var.business_unit
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "postgresql"
+  name             = var.name
+  business_unit    = var.business_unit
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 module "naming_kv" {
-  source        = "../../modules/naming"
-  project       = var.project
-  environment   = var.environment
-  resource_type = "keyvault"
-  name          = var.name
-  business_unit = var.business_unit
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "keyvault"
+  name             = var.name
+  business_unit    = var.business_unit
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
+}
+
+module "naming_cr" {
+  source           = "github.com/csGIT34/terraform-azurerm-naming?ref=v1.0.0"
+  project          = var.project
+  environment      = var.environment
+  resource_type    = "container_registry"
+  name             = var.name
+  business_unit    = var.business_unit
+  application_id   = var.application_id
+  application_name = var.application_name
+  tier             = var.tier
+  cost_center      = var.cost_center
 }
 
 # 2. Resource Group (shared by all components)
 module "resource_group" {
-  source   = "../../modules/resource_group"
+  source   = "github.com/csGIT34/terraform-azurerm-resource-group?ref=v1.0.0"
   name     = module.naming_app.resource_group_name
   location = var.location
   tags     = module.naming_app.tags
 }
 
-# 3. PostgreSQL
+# 3. Container Registry
+module "container_registry" {
+  source              = "github.com/csGIT34/terraform-azurerm-container-registry?ref=v1.0.0"
+  name                = module.naming_cr.name
+  resource_group_name = module.resource_group.name
+  location            = var.location
+  sku                 = var.acr_sku
+  tags                = module.naming_app.tags
+}
+
+# 4. PostgreSQL
 module "postgresql" {
-  source                = "../../modules/postgresql"
+  source                = "github.com/csGIT34/terraform-azurerm-postgresql?ref=v1.0.0"
   name                  = module.naming_pg.name
   location              = var.location
   resource_group_name   = module.resource_group.name
@@ -89,9 +132,9 @@ module "postgresql" {
   tags                  = module.naming_app.tags
 }
 
-# 4. Key Vault (stores all secrets)
+# 5. Key Vault (stores all secrets)
 module "key_vault" {
-  source              = "../../modules/key_vault"
+  source              = "github.com/csGIT34/terraform-azurerm-key-vault?ref=v1.0.0"
   name                = module.naming_kv.name
   location            = var.location
   resource_group_name = module.resource_group.name
@@ -103,9 +146,9 @@ module "key_vault" {
   }
 }
 
-# 5. Container App (with managed identity for Key Vault access)
+# 6. Container App (with managed identity for Key Vault + ACR access)
 module "container_app" {
-  source                       = "../../modules/container_app"
+  source                       = "github.com/csGIT34/terraform-azurerm-container-app?ref=v1.0.0"
   name                         = module.naming_app.name
   location                     = var.location
   resource_group_name          = module.resource_group.name
@@ -122,22 +165,45 @@ module "container_app" {
   tags                         = module.naming_app.tags
 
   environment_variables = merge(var.environment_variables, {
-    DATABASE_HOST = module.postgresql.fqdn
-    DATABASE_NAME = module.postgresql.database_name
-    KEY_VAULT_URI = module.key_vault.vault_uri
+    DATABASE_HOST         = module.postgresql.fqdn
+    DATABASE_NAME         = module.postgresql.database_name
+    KEY_VAULT_URI         = module.key_vault.vault_uri
+    ACR_LOGIN_SERVER      = module.container_registry.login_server
   })
 }
 
-# 6. RBAC: Container App managed identity -> Key Vault Secrets User
+# 7. Wait for ARM propagation before RBAC assignments
+# Azure ARM API has eventual consistency - resources may return 404
+# immediately after creation when used as RBAC scopes.
+resource "time_sleep" "wait_for_arm_propagation" {
+  depends_on = [
+    module.container_app,
+    module.key_vault,
+    module.postgresql,
+    module.container_registry,
+  ]
+  create_duration = "30s"
+}
+
+# 8. RBAC: Container App managed identity -> Key Vault Secrets User
 resource "azurerm_role_assignment" "app_keyvault_access" {
   scope                = module.key_vault.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = module.container_app.principal_id
+  depends_on           = [time_sleep.wait_for_arm_propagation]
 }
 
-# 7. Security Groups
+# 9. RBAC: Container App managed identity -> ACR Pull
+resource "azurerm_role_assignment" "app_acr_pull" {
+  scope                = module.container_registry.id
+  role_definition_name = "AcrPull"
+  principal_id         = module.container_app.principal_id
+  depends_on           = [time_sleep.wait_for_arm_propagation]
+}
+
+# 10. Security Groups
 module "security_groups" {
-  source       = "../../modules/security_groups"
+  source       = "github.com/csGIT34/terraform-azurerm-security-groups?ref=v1.0.0"
   project      = var.project
   environment  = var.environment
   owner_emails = var.owners
@@ -147,11 +213,12 @@ module "security_groups" {
   ]
 }
 
-# 8. RBAC Assignments (resource-scoped, not resource group-scoped)
+# 11. RBAC Assignments (resource-scoped)
 module "rbac" {
-  source = "../../modules/rbac_assignments"
+  source     = "github.com/csGIT34/terraform-azurerm-rbac-assignments?ref=v1.0.0"
+  depends_on = [time_sleep.wait_for_arm_propagation]
   assignments = [
-    # Readers get read access to individual resources
+    # Readers
     {
       principal_id         = module.security_groups.group_ids["backend-readers"]
       role_definition_name = "Reader"
@@ -162,7 +229,12 @@ module "rbac" {
       role_definition_name = "Key Vault Secrets User"
       scope                = module.key_vault.id
     },
-    # Admins get scoped access to individual resources
+    {
+      principal_id         = module.security_groups.group_ids["backend-readers"]
+      role_definition_name = "AcrPull"
+      scope                = module.container_registry.id
+    },
+    # Admins
     {
       principal_id         = module.security_groups.group_ids["backend-admins"]
       role_definition_name = "Contributor"
@@ -175,31 +247,13 @@ module "rbac" {
     },
     {
       principal_id         = module.security_groups.group_ids["backend-admins"]
+      role_definition_name = "AcrPush"
+      scope                = module.container_registry.id
+    },
+    {
+      principal_id         = module.security_groups.group_ids["backend-admins"]
       role_definition_name = "Reader"
       scope                = module.postgresql.id
     },
   ]
-}
-
-# 9. Diagnostic Settings (optional)
-module "diagnostics_app" {
-  source = "../../modules/diagnostic_settings"
-  count  = var.enable_diagnostics ? 1 : 0
-
-  name                       = "${module.naming_app.name}-app"
-  target_resource_id         = module.container_app.id
-  log_analytics_workspace_id = var.log_analytics_workspace_id
-  logs                       = ["ContainerAppConsoleLogs", "ContainerAppSystemLogs"]
-  metrics                    = ["AllMetrics"]
-}
-
-module "diagnostics_pg" {
-  source = "../../modules/diagnostic_settings"
-  count  = var.enable_diagnostics ? 1 : 0
-
-  name                       = "${module.naming_app.name}-pg"
-  target_resource_id         = module.postgresql.id
-  log_analytics_workspace_id = var.log_analytics_workspace_id
-  logs                       = ["PostgreSQLLogs"]
-  metrics                    = ["AllMetrics"]
 }

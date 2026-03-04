@@ -5,66 +5,37 @@ terraform {
   required_version = ">= 1.5.0"
 }
 
-variable "project" {
-  description = "Project name"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "resource_type" {
-  description = "Type of resource to generate name for"
-  type        = string
-}
-
-variable "name" {
-  description = "Resource name suffix"
-  type        = string
-}
-
-variable "business_unit" {
-  description = "Business unit for tagging"
-  type        = string
-  default     = ""
-}
-
-variable "pattern_name" {
-  description = "Pattern name for unique resource group naming"
-  type        = string
-  default     = ""
-}
-
 locals {
   # Azure resource naming prefixes
   prefixes = {
-    keyvault         = "kv"
-    postgresql       = "psql"
-    mongodb          = "cosmos"
-    storage_account  = "st"
-    function_app     = "func"
-    resource_group   = "rg"
-    security_group   = "sg"
-    azure_sql        = "sql"
-    eventhub         = "evh"
-    static_web_app   = "swa"
-    aks_namespace    = "ns"
-    container_app    = "ca"
-    container_env    = "cae"
-    linux_vm         = "vm"
-    private_endpoint = "pe"
-    log_analytics    = "log"
-    app_insights     = "appi"
-    service_plan     = "asp"
+    keyvault           = "kv"
+    postgresql         = "psql"
+    mongodb            = "cosmos"
+    storage_account    = "st"
+    function_app       = "func"
+    resource_group     = "rg"
+    security_group     = "sg"
+    azure_sql          = "sql"
+    eventhub           = "evh"
+    static_web_app     = "swa"
+    aks_namespace      = "ns"
+    container_app      = "ca"
+    container_env      = "cae"
+    container_registry = "cr"
+    linux_vm           = "vm"
+    private_endpoint   = "pe"
+    log_analytics      = "log"
+    app_insights       = "appi"
+    service_plan       = "asp"
   }
 
   # Environment abbreviations for constrained resources
   env_abbrev = {
-    dev     = "d"
-    staging = "s"
-    prod    = "p"
+    prototype = "x"
+    dev       = "d"
+    tst       = "t"
+    stg       = "s"
+    prd       = "p"
   }
 
   # Standard name pattern: {prefix}-{project}-{name}-{env}
@@ -93,39 +64,28 @@ locals {
   keyvault_base      = "kv-${var.project}-${var.name}-${local.keyvault_env}"
   keyvault_truncated = substr(local.keyvault_base, 0, 24)
   # Remove trailing hyphens after truncation to ensure valid Key Vault name
-  keyvault_name      = trimsuffix(local.keyvault_truncated, "-")
+  keyvault_name = trimsuffix(local.keyvault_truncated, "-")
+
+  # Container Registry: alphanumeric only, 5-50 chars
+  # Format: cr{project}{name}{env_abbrev}
+  cr_project = lower(replace(var.project, "-", ""))
+  cr_suffix  = lower(replace(var.name, "-", ""))
+  cr_env     = lookup(local.env_abbrev, var.environment, substr(var.environment, 0, 1))
+  cr_name = lower(join("", [
+    "cr",
+    substr(local.cr_project, 0, min(length(local.cr_project), 20)),
+    substr(local.cr_suffix, 0, min(length(local.cr_suffix), 20)),
+    local.cr_env
+  ]))
 
   # Select appropriate name based on resource type
   resource_name = var.resource_type == "storage_account" ? local.storage_name : (
-    var.resource_type == "keyvault" ? local.keyvault_name : local.standard_name
+    var.resource_type == "keyvault" ? local.keyvault_name : (
+      var.resource_type == "container_registry" ? local.cr_name : local.standard_name
+    )
   )
 
   # Resource group includes pattern name for uniqueness across patterns
   # If pattern_name is empty, fall back to project-environment only
   resource_group_name = var.pattern_name != "" ? "rg-${var.project}-${var.pattern_name}-${var.environment}" : "rg-${var.project}-${var.environment}"
-}
-
-output "name" {
-  description = "Generated resource name"
-  value       = local.resource_name
-}
-
-output "resource_group_name" {
-  description = "Generated resource group name"
-  value       = local.resource_group_name
-}
-
-output "prefix" {
-  description = "Prefix used for this resource type"
-  value       = lookup(local.prefixes, var.resource_type, var.resource_type)
-}
-
-output "tags" {
-  description = "Standard tags for the resource"
-  value = {
-    Project      = var.project
-    Environment  = var.environment
-    BusinessUnit = var.business_unit
-    ManagedBy    = "Terraform-Patterns"
-  }
 }

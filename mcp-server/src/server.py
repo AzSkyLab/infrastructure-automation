@@ -103,28 +103,13 @@ def list_patterns(category: str | None = None) -> str:
 
 @mcp.tool()
 def get_pattern_details(pattern_name: str) -> str:
-    """Get full details for a pattern including sizing, config options, and costs.
+    """Get full details for a pattern including sizing and config options.
 
     Args:
-        pattern_name: Pattern name (key_vault, storage_account, postgresql, container_app, web_backend)
+        pattern_name: Pattern name (key_vault, postgresql, container_app, container_registry, web_backend)
     """
     details = pattern_tools.get_pattern_details(pattern_name)
     return json.dumps(details, indent=2)
-
-
-@mcp.tool()
-def estimate_cost(
-    pattern_name: str, environment: str, size: str | None = None
-) -> str:
-    """Estimate monthly cost for a pattern configuration.
-
-    Args:
-        pattern_name: Pattern name
-        environment: Target environment (dev, staging, prod)
-        size: T-shirt size (small, medium, large). Defaults based on environment.
-    """
-    result = pattern_tools.estimate_cost(pattern_name, environment, size)
-    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
@@ -133,20 +118,26 @@ def validate_config(
     environment: str,
     name: str,
     project: str,
+    application_id: str,
+    application_name: str,
     business_unit: str = "",
     owners: list[str] | None = None,
     size: str | None = None,
+    tier: int = 4,
 ) -> str:
     """Validate a pattern configuration before provisioning.
 
     Args:
         pattern_name: Pattern name
-        environment: Target environment (dev, staging, prod)
+        environment: Target environment (prototype, dev, tst, stg, prd)
         name: Resource name
         project: Project name
+        application_id: Unique application identifier
+        application_name: Human-readable application name
         business_unit: Business unit
         owners: List of owner emails
-        size: T-shirt size override
+        size: T-shirt size override (small, medium, large, xlarge)
+        tier: Application tier (1-4, default 4)
     """
     resolver = _get_resolver()
 
@@ -159,6 +150,9 @@ def validate_config(
         "environment": environment,
         "business_unit": business_unit,
         "owners": owners or [],
+        "application_id": application_id,
+        "application_name": application_name,
+        "tier": tier,
     }
 
     validation = resolver.validate_config(pattern_name, environment, config, metadata)
@@ -166,9 +160,7 @@ def validate_config(
     # Also show what would be resolved
     if validation["valid"]:
         tfvars = resolver.resolve(pattern_name, environment, config, metadata)
-        cost = resolver.estimate_cost(pattern_name, environment, size)
         validation["resolved_tfvars"] = tfvars
-        validation["cost_estimate"] = cost
 
     return json.dumps(validation, indent=2)
 
@@ -179,38 +171,44 @@ def validate_config(
 @mcp.tool()
 async def provision(
     pattern_name: str,
-    environment: str,
     name: str,
     project: str,
+    application_id: str,
+    application_name: str,
     business_unit: str = "",
     owners: list[str] | None = None,
     location: str = "eastus",
     size: str | None = None,
+    tier: int = 4,
 ) -> str:
-    """Provision infrastructure (prototype mode - triggers GitHub Actions).
+    """Provision infrastructure to the prototype environment.
 
-    Creates Azure resources by triggering a workflow_dispatch on the
-    infrastructure-automation repository.
+    Pushes tfvars to app-infrastructure repo, which triggers terraform apply
+    via the terraform-apply workflow. Always targets the prototype environment.
 
     Args:
-        pattern_name: Pattern to provision (key_vault, storage_account, postgresql, container_app, web_backend)
-        environment: Target environment (dev, staging, prod)
+        pattern_name: Pattern to provision (key_vault, postgresql, container_app, container_registry, web_backend)
         name: Resource name
         project: Project name
+        application_id: Unique application identifier
+        application_name: Human-readable application name
         business_unit: Business unit for tagging
         owners: List of owner email addresses
         location: Azure region (default: eastus)
-        size: T-shirt size (small, medium, large)
+        size: T-shirt size (small, medium, large, xlarge)
+        tier: Application tier (1-4, default 4)
     """
     result = await provision_tools.provision(
         pattern_name=pattern_name,
-        environment=environment,
         config={"name": name},
         project=project,
         business_unit=business_unit,
         owners=owners,
         location=location,
         size=size,
+        application_id=application_id,
+        application_name=application_name,
+        tier=tier,
     )
     return json.dumps(result, indent=2)
 
@@ -218,34 +216,41 @@ async def provision(
 @mcp.tool()
 async def destroy(
     pattern_name: str,
-    environment: str,
     name: str,
     project: str,
+    application_id: str,
+    application_name: str,
     business_unit: str = "",
     owners: list[str] | None = None,
     location: str = "eastus",
+    tier: int = 4,
 ) -> str:
-    """Destroy infrastructure (prototype mode - triggers GitHub Actions).
+    """Destroy prototype infrastructure (triggers GitHub Actions).
 
-    Tears down Azure resources by triggering a destroy workflow.
+    Tears down Azure resources in the prototype environment by triggering
+    a destroy workflow.
 
     Args:
         pattern_name: Pattern to destroy
-        environment: Target environment
         name: Resource name
         project: Project name
+        application_id: Unique application identifier
+        application_name: Human-readable application name
         business_unit: Business unit
         owners: Owner emails
         location: Azure region
+        tier: Application tier (1-4, default 4)
     """
     result = await provision_tools.destroy(
         pattern_name=pattern_name,
-        environment=environment,
         config={"name": name},
         project=project,
         business_unit=business_unit,
         owners=owners,
         location=location,
+        application_id=application_id,
+        application_name=application_name,
+        tier=tier,
     )
     return json.dumps(result, indent=2)
 
@@ -259,25 +264,34 @@ async def push_tfvars(
     environment: str,
     name: str,
     project: str,
+    application_id: str,
+    application_name: str,
     business_unit: str = "",
     owners: list[str] | None = None,
     location: str = "eastus",
     size: str | None = None,
+    tier: int = 4,
 ) -> str:
     """Push tfvars to app-infrastructure repo for GitOps deployment (production mode).
 
-    Creates a branch {project}/{environment} and pushes terraform.tfvars.json
-    and backend.hcl. The push triggers terraform apply in the app-infrastructure repo.
+    Creates folder {application_id}/{application_name}/{environment}/{pattern_name}/
+    on main and pushes terraform.tfvars.json and backend.hcl.
+    The push triggers terraform apply in the app-infrastructure repo.
+
+    Not available for prototype environment — use provision tool instead.
 
     Args:
         pattern_name: Pattern to deploy
-        environment: Target environment (dev, staging, prod)
+        environment: Target environment (dev, tst, stg, prd)
         name: Resource name
         project: Project name
+        application_id: Unique application identifier
+        application_name: Human-readable application name
         business_unit: Business unit
         owners: Owner emails
         location: Azure region
-        size: T-shirt size
+        size: T-shirt size (small, medium, large, xlarge)
+        tier: Application tier (1-4, default 4)
     """
     result = await tfvars_tools.push_tfvars(
         pattern_name=pattern_name,
@@ -288,6 +302,9 @@ async def push_tfvars(
         owners=owners,
         location=location,
         size=size,
+        application_id=application_id,
+        application_name=application_name,
+        tier=tier,
     )
     return json.dumps(result, indent=2)
 

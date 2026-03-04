@@ -39,6 +39,9 @@ async def list_deployments(
 ) -> list[dict[str, Any]]:
     """List recent infrastructure deployments (workflow runs).
 
+    Queries the terraform-apply workflow in the app-infrastructure repo,
+    which handles both prototype and production deployments.
+
     Args:
         status: Filter by status (queued, in_progress, completed)
         limit: Max results to return (capped at 100)
@@ -49,7 +52,8 @@ async def list_deployments(
     limit = min(max(limit, 1), 100)
     gh = _get_github_client()
     return await gh.get_workflow_runs(
-        workflow_file="prototype-provision.yaml",
+        workflow_file="terraform-apply.yaml",
         status=status,
         per_page=limit,
+        repo="app_infra",
     )

@@ -1,26 +1,28 @@
-name: Validate Pattern Sync
+name: Validate Repo Sync
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'config/patterns/*.yaml'
-      - 'terraform/patterns/*/main.tf'
-  push:
-    branches:
-      - main
-    paths:
-      - 'config/patterns/*.yaml'
-      - 'terraform/patterns/*/main.tf'
+  schedule:
+    - cron: '0 6 * * 1' # Weekly on Monday at 6am UTC
+
+permissions:
+  contents: read
 
 jobs:
-  validate-sync:
-    name: Validate patterns are in sync
+  validate-repos:
+    name: Verify pattern repos exist
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -28,54 +30,76 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml requests
 
-      - name: Validate pattern sync
+      - name: Verify repos exist
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
         run: |
           python3 << 'EOF'
-          import json
+          import os
+          import requests
           import yaml
           from pathlib import Path
 
+          token = os.environ["GH_TOKEN"]
+          org = os.environ["ORG"]
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github+json",
+          }
+
           errors = []
+          warnings = []
 
-          # Get patterns from terraform/patterns directories
-          tf_patterns = sorted([
-              p.name for p in Path('terraform/patterns').iterdir()
-              if p.is_dir() and (p / 'main.tf').exists()
-          ])
+          # Shared module repos (always expected)
+          shared_repos = [
+              "terraform-azurerm-naming",
+              "terraform-azurerm-security-groups",
+              "terraform-azurerm-rbac-assignments",
+              "terraform-azurerm-resource-group",
+          ]
 
-          # Get patterns from config/patterns/*.yaml
-          config_patterns = []
-          for f in Path('config/patterns').glob('*.yaml'):
+          # Build expected repos from pattern YAMLs
+          pattern_repos = []
+          for f in sorted(Path("config/patterns").glob("*.yaml")):
               with open(f) as fh:
                   data = yaml.safe_load(fh)
-                  if data and 'name' in data:
-                      config_patterns.append(data['name'])
-          config_patterns.sort()
+              if not data:
+                  continue
 
-          print(f"Terraform patterns: {tf_patterns}")
-          print(f"Config patterns:    {config_patterns}")
+              name = data.get("name", f.stem)
+              category = data.get("category", "single-resource")
 
-          # Check sync
-          missing_config = set(tf_patterns) - set(config_patterns)
-          extra_config = set(config_patterns) - set(tf_patterns)
+              if category == "composite":
+                  pattern_repos.append(f"terraform-pattern-{name}")
+              else:
+                  pattern_repos.append(f"terraform-azurerm-{name}")
 
-          if missing_config:
-              errors.append(f"Patterns in terraform/ but not in config/: {list(missing_config)}")
-          if extra_config:
-              errors.append(f"Patterns in config/ but not in terraform/: {list(extra_config)}")
+          all_repos = shared_repos + pattern_repos
 
-          # Check each pattern has VERSION file
-          for p in tf_patterns:
-              version_file = Path(f'terraform/patterns/{p}/VERSION')
-              if not version_file.exists():
-                  errors.append(f"Missing VERSION file for pattern: {p}")
+          print(f"Checking {len(all_repos)} repos in {org}...")
+
+          for repo in all_repos:
+              resp = requests.get(
+                  f"https://api.github.com/repos/{org}/{repo}",
+                  headers=headers,
+              )
+              if resp.status_code == 200:
+                  print(f"  {repo}: EXISTS")
+              elif resp.status_code == 404:
+                  errors.append(f"{repo}: NOT FOUND")
+                  print(f"  {repo}: NOT FOUND")
+              else:
+                  warnings.append(f"{repo}: HTTP {resp.status_code}")
+                  print(f"  {repo}: HTTP {resp.status_code}")
 
           if errors:
+              print(f"\n{len(errors)} repos missing:")
               for e in errors:
-                  print(f"ERROR: {e}")
+                  print(f"  ERROR: {e}")
               exit(1)
-
-          print("All patterns are in sync!")
+          else:
+              print(f"\nAll {len(all_repos)} repos verified!")
           EOF

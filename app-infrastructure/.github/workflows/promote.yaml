@@ -1,0 +1,284 @@
+# Environment Promotion Workflow
+#
+# PR-based promotion: copies tfvars from source environment to target,
+# adjusts sizing based on pattern YAML configs, and creates a PR.
+# When the PR is merged, terraform-apply.yaml handles the deployment.
+#
+# Promotion path: prototype -> dev -> tst -> stg -> prd
+
+name: Promote
+
+run-name: "promote: ${{ inputs.pattern }} for ${{ inputs.application_name }} (${{ inputs.source_environment }} → ${{ inputs.target_environment }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      application_id:
+        description: 'Application ID'
+        required: true
+        type: string
+      application_name:
+        description: 'Application name'
+        required: true
+        type: string
+      pattern:
+        description: 'Pattern to promote'
+        required: true
+        type: choice
+        options:
+          - key_vault
+          - postgresql
+          - container_app
+          - container_registry
+          - web_backend
+      source_environment:
+        description: 'Source environment'
+        required: true
+        type: choice
+        options:
+          - prototype
+          - dev
+          - tst
+          - stg
+      target_environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - tst
+          - stg
+          - prd
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    name: "promote: ${{ inputs.source_environment }} → ${{ inputs.target_environment }}"
+    runs-on: ubuntu-latest
+
+    env:
+      APP_ID: ${{ inputs.application_id }}
+      APP_NAME: ${{ inputs.application_name }}
+      PATTERN: ${{ inputs.pattern }}
+      SOURCE_ENV: ${{ inputs.source_environment }}
+      TARGET_ENV: ${{ inputs.target_environment }}
+
+    steps:
+      - name: Validate promotion path
+        run: |
+          # Define environment ordering
+          declare -A ENV_ORDER
+          ENV_ORDER[prototype]=0
+          ENV_ORDER[dev]=1
+          ENV_ORDER[tst]=2
+          ENV_ORDER[stg]=3
+          ENV_ORDER[prd]=4
+
+          SOURCE_IDX=${ENV_ORDER[$SOURCE_ENV]}
+          TARGET_IDX=${ENV_ORDER[$TARGET_ENV]}
+
+          if [ -z "$SOURCE_IDX" ] || [ -z "$TARGET_IDX" ]; then
+            echo "::error::Invalid environment specified"
+            exit 1
+          fi
+
+          if [ "$TARGET_IDX" -le "$SOURCE_IDX" ]; then
+            echo "::error::Target environment must be higher than source. Cannot promote from $SOURCE_ENV to $TARGET_ENV."
+            exit 1
+          fi
+
+          echo "Promotion path validated: $SOURCE_ENV (${SOURCE_IDX}) → $TARGET_ENV (${TARGET_IDX})"
+
+      - name: Checkout app-infrastructure
+        uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          repositories: infrastructure-automation
+
+      - name: Checkout infrastructure-automation (pattern configs)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/infrastructure-automation
+          path: infra-automation
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Read source tfvars and adjust for target
+        id: promote
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+          import sys
+          import yaml
+
+          app_id = os.environ["APP_ID"]
+          app_name = os.environ["APP_NAME"]
+          pattern = os.environ["PATTERN"]
+          source_env = os.environ["SOURCE_ENV"]
+          target_env = os.environ["TARGET_ENV"]
+
+          # Read source tfvars
+          source_path = f"{app_id}/{app_name}/{source_env}/{pattern}/terraform.tfvars.json"
+          if not os.path.exists(source_path):
+              print(f"::error::Source tfvars not found: {source_path}")
+              sys.exit(1)
+
+          with open(source_path) as f:
+              tfvars = json.load(f)
+
+          # Load pattern YAML for sizing
+          pattern_yaml_path = f"infra-automation/config/patterns/{pattern}.yaml"
+          if not os.path.exists(pattern_yaml_path):
+              print(f"::error::Pattern config not found: {pattern_yaml_path}")
+              sys.exit(1)
+
+          with open(pattern_yaml_path) as f:
+              pattern_config = yaml.safe_load(f)
+
+          sizing = pattern_config.get("sizing", {})
+
+          # Infer current t-shirt size by matching source sizing values
+          inferred_size = None
+          for size_name, size_envs in sizing.items():
+              if source_env in size_envs:
+                  source_sizing = size_envs[source_env]
+                  # Check if all sizing keys match current tfvars
+                  match = all(
+                      tfvars.get(k) == v for k, v in source_sizing.items()
+                  )
+                  if match:
+                      inferred_size = size_name
+                      break
+
+          if not inferred_size:
+              # Default to small if we can't infer
+              inferred_size = "small"
+              print(f"::warning::Could not infer t-shirt size, defaulting to {inferred_size}")
+
+          print(f"Inferred t-shirt size: {inferred_size}")
+
+          # Get target sizing values
+          target_sizing = {}
+          if inferred_size in sizing and target_env in sizing[inferred_size]:
+              target_sizing = sizing[inferred_size][target_env]
+
+          # Update environment
+          tfvars["environment"] = target_env
+
+          # Merge target sizing values into tfvars
+          tfvars.update(target_sizing)
+
+          # Write promoted tfvars
+          target_dir = f"{app_id}/{app_name}/{target_env}/{pattern}"
+          os.makedirs(target_dir, exist_ok=True)
+
+          with open(f"{target_dir}/terraform.tfvars.json", "w") as f:
+              json.dump(tfvars, f, indent=2)
+              f.write("\n")
+
+          # Generate backend.hcl with new state key
+          business_unit = tfvars.get("business_unit", "default") or "default"
+          project = tfvars.get("project", "unknown")
+          name = tfvars.get("name", pattern)
+          state_key = f"{app_id}/{business_unit}/{target_env}/{project}/{pattern}-{name}/terraform.tfstate"
+
+          with open(f"{target_dir}/backend.hcl", "w") as f:
+              f.write(f'# Auto-generated backend configuration\nkey = "{state_key}"\n')
+
+          # Output summary for PR body
+          sizing_changes = []
+          for k, v in target_sizing.items():
+              old_val = tfvars.get(k, "N/A")
+              if old_val != v:
+                  sizing_changes.append(f"- `{k}`: {old_val} → {v}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"inferred_size={inferred_size}\n")
+              f.write(f"target_dir={target_dir}\n")
+              f.write(f"state_key={state_key}\n")
+
+          # Write sizing changes to a file for multiline output
+          with open("/tmp/sizing_changes.txt", "w") as f:
+              f.write("\n".join(sizing_changes) if sizing_changes else "No sizing changes")
+
+          print(f"Promoted tfvars written to {target_dir}/")
+          print(f"State key: {state_key}")
+          PYEOF
+
+      - name: Create promotion branch and PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="promote/${APP_ID}-${APP_NAME}/${SOURCE_ENV}-to-${TARGET_ENV}/${PATTERN}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and switch to branch
+          git checkout -b "$BRANCH"
+
+          # Stage promoted files
+          TARGET_DIR="${{ steps.promote.outputs.target_dir }}"
+          git add "${TARGET_DIR}/terraform.tfvars.json" "${TARGET_DIR}/backend.hcl"
+
+          # Commit
+          git commit -m "promote: ${PATTERN} for ${APP_NAME} (${SOURCE_ENV} → ${TARGET_ENV})"
+
+          # Push
+          git push origin "$BRANCH"
+
+          # Read sizing changes
+          SIZING_CHANGES=$(cat /tmp/sizing_changes.txt)
+
+          # Create PR
+          PR_URL=$(gh pr create \
+            --title "promote: ${PATTERN} for ${APP_NAME} (${SOURCE_ENV} → ${TARGET_ENV})" \
+            --body "$(cat <<EOF
+          ## Promotion Summary
+
+          | Property | Value |
+          |----------|-------|
+          | Application | \`${APP_ID}\` / \`${APP_NAME}\` |
+          | Pattern | \`${PATTERN}\` |
+          | Source | \`${SOURCE_ENV}\` |
+          | Target | \`${TARGET_ENV}\` |
+          | T-shirt size | \`${{ steps.promote.outputs.inferred_size }}\` |
+          | State key | \`${{ steps.promote.outputs.state_key }}\` |
+
+          ## Sizing Changes
+
+          ${SIZING_CHANGES}
+
+          ## What happens next
+
+          When this PR is merged, the \`terraform-apply\` workflow will automatically
+          deploy the \`${PATTERN}\` pattern to the \`${TARGET_ENV}\` environment.
+
+          ---
+          *Triggered by environment promotion workflow*
+          EOF
+          )" \
+            --base main)
+
+          echo "PR created: $PR_URL"
+          echo "## Promotion PR Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR:** $PR_URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Merge the PR to deploy \`${PATTERN}\` to \`${TARGET_ENV}\`." >> $GITHUB_STEP_SUMMARY

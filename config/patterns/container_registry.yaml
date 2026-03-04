@@ -1,0 +1,56 @@
+name: container_registry
+description: |
+  Azure Container Registry with security groups and RBAC.
+  Supports Basic, Standard, and Premium SKUs with geo-replication.
+category: single-resource
+components:
+  - resource-group
+  - container-registry
+  - security-groups
+  - rbac-assignments
+use_cases:
+  - Container image storage
+  - CI/CD pipeline artifact registry
+  - Helm chart repository
+sizing:
+  small:
+    prototype: { sku: "Basic" }
+    dev: { sku: "Basic" }
+    tst: { sku: "Basic" }
+    stg: { sku: "Basic" }
+    prd: { sku: "Standard" }
+  medium:
+    prototype: { sku: "Basic" }
+    dev: { sku: "Basic" }
+    tst: { sku: "Basic" }
+    stg: { sku: "Standard" }
+    prd: { sku: "Standard" }
+  large:
+    prototype: { sku: "Standard" }
+    dev: { sku: "Standard" }
+    tst: { sku: "Standard" }
+    stg: { sku: "Premium" }
+    prd: { sku: "Premium" }
+  xlarge:
+    prototype: { sku: "Standard" }
+    dev: { sku: "Standard" }
+    tst: { sku: "Standard" }
+    stg: { sku: "Premium" }
+    prd: { sku: "Premium", georeplications: [{ location: "westus2", zone_redundancy_enabled: true }] }
+tier_defaults:
+  1: { sku: "Premium", georeplications: [{ location: "westus2", zone_redundancy_enabled: true }] }
+  2: { sku: "Premium" }
+  3: { sku: "Standard" }
+  4: { sku: "Basic" }
+config:
+  required:
+    - name
+  optional:
+    - sku:
+        type: string
+        default: "Basic"
+        description: Container Registry SKU (Basic, Standard, Premium)
+    - admin_enabled:
+        type: boolean
+        default: false
+        description: Enable admin user (not recommended for production)
