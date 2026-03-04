@@ -105,7 +105,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/${{ steps.repo.outputs.repo }}
-          ref: v1.1.0
+          ref: v1.1.1
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Terraform
