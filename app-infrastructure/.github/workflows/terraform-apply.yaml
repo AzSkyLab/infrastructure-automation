@@ -91,12 +91,14 @@ jobs:
             fi
 
             # Determine pattern repo and terraform directory
+            # Convert underscores to hyphens for repo naming convention
+            PATTERN_HYPHEN=$(echo "$PATTERN" | tr '_' '-')
             COMPOSITES="web_backend"
             if echo "$COMPOSITES" | grep -qw "$PATTERN"; then
-              REPO="terraform-pattern-${PATTERN}"
+              REPO="terraform-pattern-${PATTERN_HYPHEN}"
               TF_DIR="."
             else
-              REPO="terraform-azurerm-${PATTERN}"
+              REPO="terraform-azurerm-${PATTERN_HYPHEN}"
               TF_DIR="pattern"
             fi
 

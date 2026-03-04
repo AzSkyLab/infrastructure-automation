@@ -82,12 +82,14 @@ jobs:
       - name: Determine pattern repo
         id: repo
         run: |
+          # Convert underscores to hyphens for repo naming convention
+          PATTERN_HYPHEN=$(echo "$INPUT_PATTERN" | tr '_' '-')
           COMPOSITES="web_backend"
           if echo "$COMPOSITES" | grep -qw "$INPUT_PATTERN"; then
-            echo "repo=terraform-pattern-${INPUT_PATTERN}" >> $GITHUB_OUTPUT
+            echo "repo=terraform-pattern-${PATTERN_HYPHEN}" >> $GITHUB_OUTPUT
             echo "tf_dir=." >> $GITHUB_OUTPUT
           else
-            echo "repo=terraform-azurerm-${INPUT_PATTERN}" >> $GITHUB_OUTPUT
+            echo "repo=terraform-azurerm-${PATTERN_HYPHEN}" >> $GITHUB_OUTPUT
             echo "tf_dir=pattern" >> $GITHUB_OUTPUT
           fi
 
