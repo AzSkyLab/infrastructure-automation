@@ -111,11 +111,11 @@ Individual module/pattern repos follow the naming convention:
 | Repo | Tag | Notes |
 |------|-----|-------|
 | `terraform-pattern-web-backend` | v1.1.3 | 5-env validation |
-| `terraform-azurerm-postgresql` | v1.1.1 | 5-env validation |
-| `terraform-azurerm-key-vault` | v1.0.1 | 5-env validation |
-| `terraform-azurerm-container-app` | v1.0.1 | 5-env validation |
-| `terraform-azurerm-container-registry` | v1.0.1 | 5-env validation |
-| `terraform-azurerm-naming` | v1.0.1 | 5-env abbreviations |
+| `terraform-azurerm-postgresql` | v1.1.3 | 5-env validation |
+| `terraform-azurerm-key-vault` | v1.1.3 | 5-env validation |
+| `terraform-azurerm-container-app` | v1.1.3 | 5-env validation |
+| `terraform-azurerm-container-registry` | v1.1.3 | 5-env validation |
+| `terraform-azurerm-naming` | v1.1.3 | 5-env abbreviations |
 | `terraform-azurerm-resource-group` | v1.0.0 | |
 | `terraform-azurerm-security-groups` | v1.0.0 | |
 | `terraform-azurerm-rbac-assignments` | v1.0.0 | |
