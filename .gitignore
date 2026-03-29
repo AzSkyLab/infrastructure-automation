@@ -37,6 +37,9 @@ Thumbs.db
 .env
 .env.local
 
+# Private keys
+*.pem
+
 # Claude temp files
 *-cwd
 tmpclaude-*
