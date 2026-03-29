@@ -91,12 +91,13 @@ jobs:
         with:
           app-id: ${{ secrets.INFRA_APP_ID }}
           private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          owner: AzSkyLab
           repositories: ${{ steps.repo.outputs.repo }},terraform-google-cloud-run
 
       - name: Checkout pattern repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/${{ steps.repo.outputs.repo }}
+          repository: AzSkyLab/${{ steps.repo.outputs.repo }}
           ref: v1.0.0
           token: ${{ steps.app-token.outputs.token }}
 

@@ -33,7 +33,7 @@ locals {
 }
 
 module "cloud_run" {
-  source = "../../modules/cloud_run"
+  source = "github.com/AzSkyLab/terraform-google-cloud-run?ref=v1.0.0"
 
   name                  = var.name
   project_id            = var.project_id
