@@ -1,0 +1,63 @@
+name: cloud_run
+description: |
+  GCP Cloud Run service with scale-to-zero support and optional
+  public access. Designed for cross-cloud HA with Azure Container App.
+category: single-resource
+provider: gcp
+components:
+  - cloud-run-service
+use_cases:
+  - Microservice deployment on GCP
+  - Cross-cloud HA failover target
+  - API hosting with scale-to-zero
+  - Multi-cloud web application backend
+sizing:
+  small:
+    prototype: { cpu: "1", memory: "512Mi", min_instance_count: 0, max_instance_count: 1 }
+    dev: { cpu: "1", memory: "512Mi", min_instance_count: 0, max_instance_count: 1 }
+    tst: { cpu: "1", memory: "512Mi", min_instance_count: 0, max_instance_count: 1 }
+    stg: { cpu: "1", memory: "512Mi", min_instance_count: 1, max_instance_count: 2 }
+    prd: { cpu: "1", memory: "512Mi", min_instance_count: 2, max_instance_count: 5 }
+  medium:
+    prototype: { cpu: "1", memory: "1Gi", min_instance_count: 0, max_instance_count: 2 }
+    dev: { cpu: "1", memory: "1Gi", min_instance_count: 0, max_instance_count: 2 }
+    tst: { cpu: "1", memory: "1Gi", min_instance_count: 0, max_instance_count: 2 }
+    stg: { cpu: "1", memory: "1Gi", min_instance_count: 1, max_instance_count: 5 }
+    prd: { cpu: "2", memory: "2Gi", min_instance_count: 2, max_instance_count: 10 }
+  large:
+    prototype: { cpu: "2", memory: "2Gi", min_instance_count: 0, max_instance_count: 3 }
+    dev: { cpu: "2", memory: "2Gi", min_instance_count: 0, max_instance_count: 3 }
+    tst: { cpu: "2", memory: "2Gi", min_instance_count: 0, max_instance_count: 3 }
+    stg: { cpu: "2", memory: "4Gi", min_instance_count: 2, max_instance_count: 10 }
+    prd: { cpu: "4", memory: "4Gi", min_instance_count: 3, max_instance_count: 20 }
+  xlarge:
+    prototype: { cpu: "4", memory: "4Gi", min_instance_count: 0, max_instance_count: 5 }
+    dev: { cpu: "4", memory: "4Gi", min_instance_count: 0, max_instance_count: 5 }
+    tst: { cpu: "4", memory: "4Gi", min_instance_count: 0, max_instance_count: 5 }
+    stg: { cpu: "4", memory: "8Gi", min_instance_count: 3, max_instance_count: 20 }
+    prd: { cpu: "4", memory: "8Gi", min_instance_count: 5, max_instance_count: 30 }
+tier_defaults:
+  1: { min_instance_count: 3 }
+  2: { min_instance_count: 2 }
+  3: { min_instance_count: 1 }
+  4: { min_instance_count: 0 }
+config:
+  required:
+    - name
+  optional:
+    - container_image:
+        type: string
+        default: "us-docker.pkg.dev/cloudrun/container/hello"
+        description: Container image to deploy
+    - container_port:
+        type: number
+        default: 8080
+        description: Container port for ingress
+    - ingress:
+        type: string
+        default: "INGRESS_TRAFFIC_ALL"
+        description: "Ingress traffic setting (INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER)"
+    - allow_unauthenticated:
+        type: boolean
+        default: true
+        description: Allow unauthenticated (public) access

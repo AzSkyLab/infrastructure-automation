@@ -1,0 +1,172 @@
+# GCP Provisioning Workflow
+#
+# Triggered by MCP server or manually via workflow_dispatch.
+# Checks out the pattern repo and runs terraform apply/destroy with provided tfvars.
+# Authenticates to GCP via Workload Identity Federation (no service account keys).
+
+name: GCP Provision
+
+run-name: "${{ inputs.action }}: ${{ inputs.pattern }} (${{ inputs.environment }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: 'Pattern name'
+        required: true
+        type: choice
+        options:
+          - cloud_run
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - prototype
+          - dev
+          - tst
+          - stg
+          - prd
+      tfvars_json:
+        description: 'Base64-encoded terraform.tfvars.json content'
+        required: true
+        type: string
+      action:
+        description: 'Action to perform (create or destroy)'
+        required: true
+        default: 'create'
+        type: choice
+        options:
+          - create
+          - destroy
+      state_key:
+        description: 'Terraform state key path'
+        required: true
+        type: string
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  TF_IN_AUTOMATION: 'true'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: gcp-provision-${{ inputs.pattern }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: "${{ inputs.action }}: ${{ inputs.pattern }} (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      INPUT_PATTERN: ${{ inputs.pattern }}
+      INPUT_ENVIRONMENT: ${{ inputs.environment }}
+      INPUT_ACTION: ${{ inputs.action }}
+      INPUT_TFVARS_JSON: ${{ inputs.tfvars_json }}
+      INPUT_STATE_KEY: ${{ inputs.state_key }}
+
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ ! "$INPUT_STATE_KEY" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+            echo "::error::Invalid state_key format"
+            exit 1
+          fi
+
+      - name: Determine pattern repo
+        id: repo
+        run: |
+          PATTERN_HYPHEN=$(echo "$INPUT_PATTERN" | tr '_' '-')
+          # All GCP patterns use terraform-pattern-{name} convention
+          echo "repo=terraform-pattern-${PATTERN_HYPHEN}" >> $GITHUB_OUTPUT
+          echo "tf_dir=." >> $GITHUB_OUTPUT
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          repositories: ${{ steps.repo.outputs.repo }}
+
+      - name: Checkout pattern repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ steps.repo.outputs.repo }}
+          ref: v1.0.0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Authenticate to GCP (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure git for private modules
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global url."https://x-access-token:${APP_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Decode tfvars
+        working-directory: ${{ steps.repo.outputs.tf_dir }}
+        run: |
+          echo "$INPUT_TFVARS_JSON" | base64 -d > terraform.tfvars.json
+          echo "Decoded tfvars (keys only):"
+          cat terraform.tfvars.json | jq 'keys' 2>/dev/null || echo "(not valid JSON)"
+
+      - name: Terraform Init
+        working-directory: ${{ steps.repo.outputs.tf_dir }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.GCP_STATE_BUCKET }}" \
+            -backend-config="prefix=${INPUT_STATE_KEY}"
+
+      - name: Terraform Plan
+        working-directory: ${{ steps.repo.outputs.tf_dir }}
+        run: |
+          DESTROY_FLAG=""
+          if [ "$INPUT_ACTION" == "destroy" ]; then
+            DESTROY_FLAG="-destroy"
+          fi
+
+          terraform plan \
+            -var-file=terraform.tfvars.json \
+            $DESTROY_FLAG \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ${{ steps.repo.outputs.tf_dir }}
+        run: terraform apply -auto-approve tfplan
+        timeout-minutes: 45
+
+      - name: Capture outputs
+        if: inputs.action == 'create'
+        run: |
+          echo "## Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          terraform output -json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: ${{ steps.repo.outputs.tf_dir }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## GCP Provisioning Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Pattern | \`$INPUT_PATTERN\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`$INPUT_ENVIRONMENT\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | \`$INPUT_ACTION\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| State Key | \`$INPUT_STATE_KEY\` |" >> $GITHUB_STEP_SUMMARY
